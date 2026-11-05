@@ -5,19 +5,24 @@
   python main.py backtest --symbol BTC/USDT --timeframe 4h --candles 1000
   python main.py trade --symbol BTC/USDT --timeframe 1h              # تجربة فقط (dry-run)
   python main.py trade --symbol BTC/USDT --timeframe 1h --live --confirm   # تنفيذ حقيقي
+  python main.py watch --symbol BTC/USDT --timeframe 1h --interval-minutes 15             # مراقبة مستمرة، تجربة
+  python main.py watch --symbol BTC/USDT --timeframe 1h --interval-minutes 15 --live --confirm  # مراقبة + تنفيذ حقيقي تلقائي
 """
 
 import argparse
+import datetime
 import logging
 import sys
+import time
 
 from bot.config import config
-from bot.data_fetcher import build_exchange, fetch_ohlcv
-from bot.executor import execute_signal
+from bot.data_fetcher import build_exchange, fetch_ohlcv, fetch_quote_balance
+from bot.executor import close_position, execute_signal
 from bot.indicators import add_indicators
 from bot.report import plot_chart, text_report
 from bot.risk import compute_position_size
 from bot.signals import generate_signal
+from bot.state import OpenPosition, clear_open_position, load_open_position, save_open_position
 from bot.zones import detect_zones
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -98,6 +103,97 @@ def cmd_trade(args):
     print(result)
 
 
+def _now() -> str:
+    return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def cmd_watch(args):
+    """مراقبة مستمرة: يفحص السوق كل args.interval_minutes دقيقة، يفتح صفقة عند
+    ظهور إشارة (إن لم تكن هناك صفقة مفتوحة بالفعل)، ويراقب وقف الخسارة/الهدف
+    لإغلاقها. يحفظ حالة الصفقة المفتوحة في ملف JSON حتى لا يفتح صفقات مكررة
+    بين دورة وأخرى."""
+
+    exchange = build_exchange()
+    live = args.live and args.confirm
+    if args.live and not args.confirm:
+        logger.error(
+            "تم تمرير --live بدون --confirm. لأمان حسابك، التنفيذ الحقيقي يتطلب كلا العلمين معاً. "
+            "سيتم التشغيل في وضع التجربة (dry-run) فقط."
+        )
+
+    state_path = args.state_file or f"state_{args.symbol.replace('/', '_')}.json"
+
+    print(f"بدء المراقبة المستمرة لـ {args.symbol} ({args.timeframe}) كل {args.interval_minutes} دقيقة.")
+    print(f"ملف تتبع الحالة: {state_path}")
+    if live:
+        print("⚠️  وضع التنفيذ الحقيقي مفعّل: سيتم فتح وإغلاق صفقات حقيقية بأموال حقيقية تلقائياً بدون تدخلك.")
+    else:
+        print("(وضع تجربة dry-run: لن يُنفذ أي أمر حقيقي، فقط محاكاة ومراقبة لإظهار السلوك الكامل.)")
+    print("اضغط Ctrl+C لإيقاف المراقبة في أي وقت.\n")
+
+    iterations = 0
+    try:
+        while True:
+            iterations += 1
+            ts = _now()
+            try:
+                df = fetch_ohlcv(exchange, args.symbol, timeframe=args.timeframe, limit=args.candles)
+                df = add_indicators(df)
+                last = df.iloc[-1]
+                price = float(last["close"])
+
+                position = load_open_position(state_path)
+
+                if position:
+                    hit_stop = (position.side == "buy" and float(last["low"]) <= position.stop_loss) or (
+                        position.side == "sell" and float(last["high"]) >= position.stop_loss
+                    )
+                    hit_target = (position.side == "buy" and float(last["high"]) >= position.take_profit) or (
+                        position.side == "sell" and float(last["low"]) <= position.take_profit
+                    )
+                    if hit_stop or hit_target:
+                        reason = "وقف الخسارة" if hit_stop else "الهدف"
+                        result = close_position(exchange, args.symbol, position, live=live)
+                        print(f"[{ts}] إغلاق الصفقة ({position.side}) عند {reason}. {result}")
+                        clear_open_position(state_path)
+                    else:
+                        print(f"[{ts}] صفقة مفتوحة ({position.side}) منذ {position.opened_at}، السعر الحالي={price:.6f}، ننتظر الوقف/الهدف.")
+                else:
+                    zones = detect_zones(df)
+                    signal = generate_signal(df, zones)
+                    if signal:
+                        if live:
+                            balance_quote = fetch_quote_balance(exchange, args.symbol)
+                        else:
+                            balance_quote = args.balance or 1000.0
+                        sizing = compute_position_size(balance_quote, signal)
+                        result = execute_signal(exchange, args.symbol, signal, sizing, live=live)
+                        print(f"[{ts}] إشارة {signal.side} جديدة! {result}")
+                        if sizing.quantity > 0:
+                            save_open_position(
+                                state_path,
+                                OpenPosition(
+                                    symbol=args.symbol,
+                                    side=signal.side,
+                                    entry_price=signal.price,
+                                    stop_loss=signal.stop_loss,
+                                    take_profit=signal.take_profit,
+                                    quantity=sizing.quantity,
+                                    opened_at=ts,
+                                ),
+                            )
+                    else:
+                        print(f"[{ts}] لا توجد إشارة الآن. السعر={price:.6f}")
+            except Exception as exc:  # لا نوقف المراقبة المستمرة بسبب خطأ عابر (شبكة، إلخ)
+                logger.error("[%s] خطأ في دورة المراقبة: %s", ts, exc)
+
+            if args.max_iterations and iterations >= args.max_iterations:
+                break
+            time.sleep(args.interval_minutes * 60)
+    except KeyboardInterrupt:
+        print("\nتم إيقاف المراقبة بواسطتك.")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="بوت تحليل السوق ومناطق البيع/الشراء")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -120,6 +216,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_trade.add_argument("--confirm", action="store_true", help="تأكيد صريح بأنك تريد تنفيذ أوامر حقيقية بأموال حقيقية")
     p_trade.set_defaults(func=cmd_trade)
 
+    p_watch = sub.add_parser("watch", parents=[common], help="مراقبة مستمرة مع تتبع حالة الصفقة (تجربة أو تنفيذ تلقائي حقيقي)")
+    p_watch.add_argument("--interval-minutes", type=float, default=15, help="الفاصل الزمني بين كل فحص (بالدقائق)")
+    p_watch.add_argument("--balance", type=float, default=None, help="رصيد وضع التجربة الافتراضي (يُتجاهل في live، حيث يُجلب الرصيد الحقيقي من المنصة)")
+    p_watch.add_argument("--state-file", default=None, help="مسار ملف تتبع حالة الصفقة (افتراضياً state_<الرمز>.json)")
+    p_watch.add_argument("--max-iterations", type=int, default=None, help="إيقاف تلقائي بعد هذا العدد من الدورات (للاختبار)")
+    p_watch.add_argument("--live", action="store_true", help="تفعيل التنفيذ الحقيقي (يتطلب --confirm أيضاً)")
+    p_watch.add_argument("--confirm", action="store_true", help="تأكيد صريح بأنك تريد تنفيذ أوامر حقيقية بأموال حقيقية تلقائياً")
+    p_watch.set_defaults(func=cmd_watch)
+
     return parser
 
 
@@ -127,7 +232,7 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.command == "trade" and args.live and args.confirm and not config.has_credentials():
+    if args.command in ("trade", "watch") and args.live and args.confirm and not config.has_credentials():
         logger.error("طلبت التنفيذ الحقيقي لكن لا توجد مفاتيح API في .env. راجع .env.example.")
         sys.exit(1)
 

@@ -38,6 +38,13 @@ def build_exchange() -> ccxt.Exchange:
     return exchange
 
 
+def fetch_quote_balance(exchange: ccxt.Exchange, symbol: str) -> float:
+    """الرصيد المتاح (الحر) بعملة التسعير (مثل USDT في BTC/USDT) من المنصة فعلياً."""
+    quote = symbol.split("/")[1]
+    balance = exchange.fetch_balance()
+    return float(balance.get("free", {}).get(quote) or 0.0)
+
+
 def fetch_ohlcv(
     exchange: ccxt.Exchange,
     symbol: str,

@@ -15,6 +15,7 @@ import ccxt
 from bot.config import config
 from bot.risk import PositionSizing
 from bot.signals import Signal
+from bot.state import OpenPosition
 
 logger = logging.getLogger("bot.executor")
 
@@ -82,3 +83,32 @@ def execute_signal(
         logger.warning("تعذر وضع أوامر وقف الخسارة/جني الربح تلقائياً: %s", exc)
 
     return ExecutionResult(dry_run=False, order=order, message=f"تم تنفيذ أمر {side} حقيقي بكمية {sizing.quantity:.6f}")
+
+
+def close_position(
+    exchange: ccxt.Exchange,
+    symbol: str,
+    position: OpenPosition,
+    live: bool = False,
+) -> ExecutionResult:
+    """يغلق صفقة مفتوحة بأمر سوق معاكس، أو يحاكي ذلك فقط إذا live=False.
+
+    يحاول أولاً إلغاء أي أوامر وقف/هدف معلّقة على المنصة لتفادي تنفيذ مزدوج
+    (أمرنا اليدوي + أمر الوقف/الهدف الذي قد يُنفَّذ في نفس اللحظة تقريباً)."""
+
+    opposite_side = "sell" if position.side == "buy" else "buy"
+
+    if not live:
+        msg = f"[تجربة] إغلاق صفقة {position.side} لـ {symbol} بكمية {position.quantity:.6f}"
+        logger.info(msg)
+        return ExecutionResult(dry_run=True, order=None, message=msg)
+
+    try:
+        for open_order in exchange.fetch_open_orders(symbol):
+            exchange.cancel_order(open_order["id"], symbol)
+    except Exception as exc:
+        logger.warning("تعذر إلغاء الأوامر المعلّقة قبل الإغلاق: %s", exc)
+
+    order = exchange.create_order(symbol, type="market", side=opposite_side, amount=position.quantity)
+    logger.warning("تم إغلاق الصفقة الحقيقية: %s", order)
+    return ExecutionResult(dry_run=False, order=order, message=f"تم إغلاق الصفقة بأمر {opposite_side} حقيقي بكمية {position.quantity:.6f}")
