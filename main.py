@@ -41,8 +41,14 @@ def cmd_analyze(args):
     print(report)
 
     out_path = args.chart_out or f"reports/{args.symbol.replace('/', '_')}_{args.timeframe}.png"
-    plot_chart(df, zones, args.symbol, signal, out_path)
-    print(f"\nتم حفظ الرسم البياني في: {out_path}")
+    try:
+        plot_chart(df, zones, args.symbol, signal, out_path)
+        print(f"\nتم حفظ الرسم البياني في: {out_path}")
+    except ImportError:
+        print(
+            "\n(تعذّر إنشاء الرسم البياني لأن مكتبة matplotlib غير مثبتة — التقرير النصي أعلاه كافٍ "
+            "للتحليل. لتفعيل الرسم البياني ثبّت matplotlib ثم أعد التشغيل.)"
+        )
 
 
 def cmd_backtest(args):

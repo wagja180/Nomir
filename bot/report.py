@@ -2,17 +2,21 @@
 
 import os
 
-import matplotlib
-import matplotlib.pyplot as plt
 import pandas as pd
-
-matplotlib.use("Agg")
 
 from bot.signals import Signal
 from bot.zones import Zone
 
 
 def plot_chart(df: pd.DataFrame, zones: list[Zone], symbol: str, signal: Signal | None, out_path: str) -> str:
+    """يرسم الرسم البياني ويحفظه. يرفع ImportError إن كانت matplotlib غير مثبتة
+    (مثلاً على بيئات محدودة كـ Termux/Android)، ليتعامل المستدعي مع ذلك بإعلام
+    المستخدم بدل انهيار البرنامج بالكامل."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
     fig, ax = plt.subplots(figsize=(14, 7))
 
     ax.plot(df.index, df["close"], color="#2962ff", linewidth=1.2, label="Close")
