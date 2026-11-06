@@ -19,6 +19,7 @@ from bot.config import config
 from bot.data_fetcher import build_exchange, fetch_ohlcv, fetch_quote_balance
 from bot.executor import close_position, execute_signal
 from bot.indicators import add_indicators
+from bot.notify import notify
 from bot.report import plot_chart, text_report
 from bot.risk import compute_position_size
 from bot.signals import generate_signal
@@ -155,6 +156,7 @@ def cmd_watch(args):
                         reason = "وقف الخسارة" if hit_stop else "الهدف"
                         result = close_position(exchange, args.symbol, position, live=live)
                         print(f"[{ts}] إغلاق الصفقة ({position.side}) عند {reason}. {result}")
+                        notify(f"إغلاق صفقة {position.side} — {args.symbol}", f"{reason} عند {price:.6f}")
                         clear_open_position(state_path)
                     else:
                         print(f"[{ts}] صفقة مفتوحة ({position.side}) منذ {position.opened_at}، السعر الحالي={price:.6f}، ننتظر الوقف/الهدف.")
@@ -169,6 +171,10 @@ def cmd_watch(args):
                         sizing = compute_position_size(balance_quote, signal)
                         result = execute_signal(exchange, args.symbol, signal, sizing, live=live)
                         print(f"[{ts}] إشارة {signal.side} جديدة! {result}")
+                        notify(
+                            f"إشارة {signal.side} جديدة — {args.symbol}",
+                            f"سعر الدخول {signal.price:.6f} | وقف {signal.stop_loss:.6f} | هدف {signal.take_profit:.6f}",
+                        )
                         if sizing.quantity > 0:
                             save_open_position(
                                 state_path,
