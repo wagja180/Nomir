@@ -62,27 +62,51 @@ def execute_signal(
     order = exchange.create_order(symbol, type="market", side=side, amount=sizing.quantity)
     logger.warning("تم تنفيذ أمر حقيقي: %s", order)
 
-    # محاولة وضع أوامر وقف الخسارة وجني الربح بعد تنفيذ الدخول (قد تختلف حسب المنصة)
-    try:
-        opposite_side = "sell" if side == "buy" else "buy"
-        exchange.create_order(
-            symbol,
-            type="stop_market" if exchange.has.get("createOrder") else "stop",
-            side=opposite_side,
-            amount=sizing.quantity,
-            params={"stopPrice": signal.stop_loss},
-        )
-        exchange.create_order(
-            symbol,
-            type="limit",
-            side=opposite_side,
-            amount=sizing.quantity,
-            price=signal.take_profit,
-        )
-    except Exception as exc:  # المنصات تختلف في دعم أوامر الوقف؛ لا نوقف البوت لهذا
-        logger.warning("تعذر وضع أوامر وقف الخسارة/جني الربح تلقائياً: %s", exc)
+    opposite_side = "sell" if side == "buy" else "buy"
+    _place_protective_oco(exchange, symbol, opposite_side, sizing.quantity, signal.stop_loss, signal.take_profit)
 
     return ExecutionResult(dry_run=False, order=order, message=f"تم تنفيذ أمر {side} حقيقي بكمية {sizing.quantity:.6f}")
+
+
+def _place_protective_oco(
+    exchange: ccxt.Exchange,
+    symbol: str,
+    opposite_side: str,
+    quantity: float,
+    stop_loss: float,
+    take_profit: float,
+) -> None:
+    """يحاول وضع أمر OCO واحد (وقف خسارة + جني ربح مرتبطان بنفس الكمية) على
+    المنصة مباشرة بعد الدخول. نوع "stop_market" المنفصل غير مقبول على أسواق
+    Binance Spot (يُرفض بخطأ "not a valid order type"), ووضع أمرين منفصلين
+    (وقف وهدف) لنفس الكمية دون ربطهما بـ OCO قد يتطلب حجز الكمية مرتين.
+
+    إن تعذّر وضع OCO (منصة لا تدعمه، أو خطأ آخر)، تبقى حماية الصفقة معتمدة
+    بالكامل على حلقة `watch` في هذا البوت التي تراقب السعر وتُغلق الصفقة يدوياً
+    عند الوصول للوقف أو الهدف — لذا يجب أن تبقى هذه العملية تعمل باستمرار."""
+
+    stop_limit_price = stop_loss * (0.995 if opposite_side == "sell" else 1.005)
+    try:
+        exchange.create_order(
+            symbol,
+            "oco",
+            opposite_side,
+            quantity,
+            take_profit,
+            params={
+                "stopPrice": stop_loss,
+                "stopLimitPrice": stop_limit_price,
+                "stopLimitTimeInForce": "GTC",
+            },
+        )
+        return
+    except Exception as exc:
+        logger.warning("تعذر وضع أمر OCO (وقف+هدف مرتبطان) على المنصة: %s", exc)
+
+    logger.warning(
+        "لا توجد أوامر وقف/هدف مُعلّقة على المنصة لهذه الصفقة. إغلاقها يعتمد "
+        "بالكامل على استمرار عمل حلقة watch لمراقبتها يدوياً."
+    )
 
 
 def close_position(
