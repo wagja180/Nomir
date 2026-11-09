@@ -29,6 +29,10 @@ def build_exchange() -> ccxt.Exchange:
             "apiKey": config.api_key or None,
             "secret": config.api_secret or None,
             "enableRateLimit": True,
+            # يصحح تلقائياً أي فرق بين ساعة الجهاز وساعة خادم المنصة (خطأ شائع
+            # على الهواتف حيث لا تتزامن الساعة بدقة، يظهر كـ "Timestamp ...
+            # ahead of the server's time" ويمنع تنفيذ أي طلب موقّع).
+            "options": {"adjustForTimeDifference": True},
         }
     )
     _apply_system_proxy(exchange)
