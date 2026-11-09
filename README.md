@@ -60,6 +60,12 @@ Each skill is a standard `SKILL.md` (with reference files where the subject need
 
 No skill here has live access to Instagram's own data (trends, algorithm signals, account insights) — they work from what you give them (metrics you paste in, posts you link or describe) and say so rather than guessing.
 
+## النسخة العربية / Arabic version
+
+كل المهارات الـ13 متوفرة بنسخة عربية كاملة في [`skills-ar/`](skills-ar) (مثل `skills/caption-linter` → `skills-ar/caption-linter-ar`), بنفس البنية والـ`reference/` الخاصة بها، لكن بأسماء `name` مختلفة (بإضافة `-ar`) لتجنّب أي تعارض مع النسخة الإنجليزية عند تحميل المجلدين معًا.
+
+All 13 skills also exist in a full Arabic translation under [`skills-ar/`](skills-ar) (e.g. `skills/caption-linter` → `skills-ar/caption-linter-ar`), same structure and reference files, with `-ar`-suffixed `name` fields so both language sets can be loaded side by side without colliding.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
