@@ -28,6 +28,9 @@ def build_exchange() -> ccxt.Exchange:
         {
             "apiKey": config.api_key or None,
             "secret": config.api_secret or None,
+            # بعض المنصات (OKX, KuCoin, ...) تتطلب كلمة مرور API إضافية؛ ccxt
+            # يسمّيها "password" بغض النظر عن اسمها الظاهر في واجهة المنصة.
+            "password": config.api_passphrase or None,
             "enableRateLimit": True,
             # يصحح تلقائياً أي فرق بين ساعة الجهاز وساعة خادم المنصة (خطأ شائع
             # على الهواتف حيث لا تتزامن الساعة بدقة، يظهر كـ "Timestamp ...

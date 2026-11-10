@@ -89,7 +89,8 @@ main.py          # سطر الأوامر (analyze / backtest / trade)
 
 | المتغير | الوصف | الافتراضي |
 |---|---|---|
-| `EXCHANGE_ID` | معرّف المنصة في ccxt | `binance` |
+| `EXCHANGE_ID` | معرّف المنصة في ccxt (مثل `binance` أو `okx`) | `binance` |
+| `EXCHANGE_API_PASSPHRASE` | كلمة مرور API إضافية تتطلبها بعض المنصات فقط (OKX، KuCoin...) | فارغة |
 | `EXCHANGE_SANDBOX` | استخدام testnet/sandbox | `true` |
 | `RISK_PER_TRADE` | نسبة رأس المال المخاطر بها لكل صفقة | `0.01` (1%) |
 | `MIN_REWARD_RISK_RATIO` | أقل نسبة مكافأة/خطر مقبولة للإشارة | `1.5` |

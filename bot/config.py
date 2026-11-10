@@ -28,6 +28,9 @@ class Config:
     exchange_id: str = os.getenv("EXCHANGE_ID", "binance")
     api_key: str = os.getenv("EXCHANGE_API_KEY", "")
     api_secret: str = os.getenv("EXCHANGE_API_SECRET", "")
+    # بعض المنصات (مثل OKX) تتطلب كلمة مرور إضافية (Passphrase) بجانب
+    # المفتاح والسر؛ تُترك فارغة لمنصات مثل Binance التي لا تحتاجها.
+    api_passphrase: str = os.getenv("EXCHANGE_API_PASSPHRASE", "")
     sandbox: bool = _bool("EXCHANGE_SANDBOX", True)
     risk_per_trade: float = _float("RISK_PER_TRADE", 0.01)
     max_open_positions: int = _int("MAX_OPEN_POSITIONS", 1)
