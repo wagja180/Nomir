@@ -611,3 +611,20 @@ The stills were generated at 9:16 and each one doubles as the Reel cover and the
 | 6 | Half walnut shell fitted out as a kitchen, copper pot on the stove, warm side light | Steam rises from the pot, slow push in, pendant lamp sways slightly |
 | 7 | Open pocket watch holding a tiny city, teacup and light bulb with skylines behind | Tiny train circles the rim, city lights twinkle, slow push in |
 | 8 | Tree hollow with a bark-and-pebble hamlet, rope bridges, thread-thin waterfall, acorn for scale | Waterfall flows, fireflies drift, slow push into the hollow |
+
+## Generated assets
+
+Stills are 1152x2048 PNG. Clips are 4 seconds, 480p, silent, each animated from its still. No clip was generated for #2 (matchboxes).
+
+| # | Idea | Still | Clip |
+|---|---|---|---|
+| 1 | Tiny houses inside fruits | [png](https://d8j0ntlcm91z4.cloudfront.net/user_3Eu6TgcqPqg3HEHHrpQ1DGfAJ1N/hf_20261111_000539_c25cb3e4-8a7e-4e03-b30a-3754fdf6328e.png) | [mp4](https://d8j0ntlcm91z4.cloudfront.net/user_3Eu6TgcqPqg3HEHHrpQ1DGfAJ1N/hf_20261111_001157_bc76b9ab-6332-4b1b-9461-6f4695fdeec0.mp4) |
+| 2 | Bedrooms inside matchboxes | [png](https://d8j0ntlcm91z4.cloudfront.net/user_3Eu6TgcqPqg3HEHHrpQ1DGfAJ1N/hf_20261111_000539_44356d22-4709-463d-87b1-c97f41e5ddc9.png) | not generated |
+| 3 | Village inside a glass bottle | [png](https://d8j0ntlcm91z4.cloudfront.net/user_3Eu6TgcqPqg3HEHHrpQ1DGfAJ1N/hf_20261111_000612_07a5f5a9-e133-40e2-bb45-2709ef92b9b7.png) | [mp4](https://d8j0ntlcm91z4.cloudfront.net/user_3Eu6TgcqPqg3HEHHrpQ1DGfAJ1N/hf_20261111_001013_01b0ebd6-1a3c-4ba9-94f3-c08a007687a7.mp4) |
+| 4 | Tiny people in a giant mushroom | [png](https://d8j0ntlcm91z4.cloudfront.net/user_3Eu6TgcqPqg3HEHHrpQ1DGfAJ1N/hf_20261111_000755_f926ea2a-e58f-4adf-91ee-9e49db72813e.png) | [mp4](https://d8j0ntlcm91z4.cloudfront.net/user_3Eu6TgcqPqg3HEHHrpQ1DGfAJ1N/hf_20261111_001054_8a467bba-a318-477d-b325-40449e5da026.mp4) |
+| 5 | Luxury homes inside crystals | [png](https://d8j0ntlcm91z4.cloudfront.net/user_3Eu6TgcqPqg3HEHHrpQ1DGfAJ1N/hf_20261111_000812_587bc4de-becc-4c1c-a0be-c7f85c3b27e5.png) | [mp4](https://d8j0ntlcm91z4.cloudfront.net/user_3Eu6TgcqPqg3HEHHrpQ1DGfAJ1N/hf_20261111_001242_a354f197-e358-44b4-b135-86a118358242.mp4) |
+| 6 | Kitchen inside a walnut | [png](https://d8j0ntlcm91z4.cloudfront.net/user_3Eu6TgcqPqg3HEHHrpQ1DGfAJ1N/hf_20261111_000812_401f4c3f-873b-4675-8161-55ba74704565.png) | [mp4](https://d8j0ntlcm91z4.cloudfront.net/user_3Eu6TgcqPqg3HEHHrpQ1DGfAJ1N/hf_20261111_000910_fb4327ed-295e-4c29-9127-6629c61b221d.mp4) |
+| 7 | Cities inside ordinary objects | [png](https://d8j0ntlcm91z4.cloudfront.net/user_3Eu6TgcqPqg3HEHHrpQ1DGfAJ1N/hf_20261111_000832_1d3c6cf5-f14a-4b29-8040-8d047185f742.png) | [mp4](https://d8j0ntlcm91z4.cloudfront.net/user_3Eu6TgcqPqg3HEHHrpQ1DGfAJ1N/hf_20261111_001157_ac17ef80-f4f9-484c-9e3e-8378617a88fb.mp4) |
+| 8 | Worlds hidden in nature | [png](https://d8j0ntlcm91z4.cloudfront.net/user_3Eu6TgcqPqg3HEHHrpQ1DGfAJ1N/hf_20261111_000832_6f350509-0195-4271-a57f-29025dfb0fc1.png) | [mp4](https://d8j0ntlcm91z4.cloudfront.net/user_3Eu6TgcqPqg3HEHHrpQ1DGfAJ1N/hf_20261111_001242_877eaec8-e1a8-4d30-8cf9-1a6828d9081a.mp4) |
+
+Each clip is 4 seconds against a 12-15 second script, so one clip covers the hook and first beat. The remaining beats need further clips or cuts of the still.
