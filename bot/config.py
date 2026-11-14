@@ -35,6 +35,12 @@ class Config:
     risk_per_trade: float = _float("RISK_PER_TRADE", 0.01)
     max_open_positions: int = _int("MAX_OPEN_POSITIONS", 1)
     min_reward_risk_ratio: float = _float("MIN_REWARD_RISK_RATIO", 1.5)
+    # أقصى مسافة (نسبة من السعر) تُعتبر فيها الشمعة "قريبة" من منطقة عرض/طلب
+    # لقبول إشارة. توسيعها يزيد عدد الإشارات لكن يضعف دقة نقطة الدخول.
+    zone_proximity_pct: float = _float("ZONE_PROXIMITY_PCT", 0.006)
+    # هل تُشترط موافقة الإشارة لاتجاه EMA50/EMA200 العام؟ تعطيلها يزيد عدد
+    # الإشارات (يسمح بالتداول عكس الاتجاه العام) لكنه أخطر عادة.
+    require_trend_alignment: bool = _bool("REQUIRE_TREND_ALIGNMENT", True)
 
     def has_credentials(self) -> bool:
         return bool(self.api_key and self.api_secret)

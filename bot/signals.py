@@ -33,12 +33,11 @@ class Signal:
         return reward / risk if risk > 0 else 0.0
 
 
-ZONE_PROXIMITY_PCT = 0.006  # يعتبر السعر "قريباً" من المنطقة ضمن 0.6%
-
-
 def generate_signal(df: pd.DataFrame, zones: list[Zone]) -> Signal | None:
     if len(df) < 210:
         return None  # غير كافٍ لحساب EMA200 بثقة
+
+    proximity_pct = config.zone_proximity_pct
 
     last = df.iloc[-1]
     price = float(last["close"])
@@ -46,15 +45,15 @@ def generate_signal(df: pd.DataFrame, zones: list[Zone]) -> Signal | None:
 
     bullish_candle = last["close"] > last["open"]
     bearish_candle = last["close"] < last["open"]
-    uptrend = last["ema_50"] > last["ema_200"]
-    downtrend = last["ema_50"] < last["ema_200"]
+    uptrend = (last["ema_50"] > last["ema_200"]) if config.require_trend_alignment else True
+    downtrend = (last["ema_50"] < last["ema_200"]) if config.require_trend_alignment else True
 
     demand = nearest_zone(zones, price, kind="demand")
     supply = nearest_zone(zones, price, kind="supply")
 
     # --- محاولة إشارة شراء عند منطقة طلب ---
-    if demand and demand.distance_pct(price) <= ZONE_PROXIMITY_PCT:
-        near_demand = demand.contains(price) or price <= demand.high * (1 + ZONE_PROXIMITY_PCT)
+    if demand and demand.distance_pct(price) <= proximity_pct:
+        near_demand = demand.contains(price) or price <= demand.high * (1 + proximity_pct)
         if near_demand and bullish_candle and last["rsi_14"] < 65 and uptrend:
             stop_loss = demand.low - atr_val * 0.5
             target_zone = supply if supply and supply.mid > price else None
@@ -75,8 +74,8 @@ def generate_signal(df: pd.DataFrame, zones: list[Zone]) -> Signal | None:
                 return sig
 
     # --- محاولة إشارة بيع عند منطقة عرض ---
-    if supply and supply.distance_pct(price) <= ZONE_PROXIMITY_PCT:
-        near_supply = supply.contains(price) or price >= supply.low * (1 - ZONE_PROXIMITY_PCT)
+    if supply and supply.distance_pct(price) <= proximity_pct:
+        near_supply = supply.contains(price) or price >= supply.low * (1 - proximity_pct)
         if near_supply and bearish_candle and last["rsi_14"] > 35 and downtrend:
             stop_loss = supply.high + atr_val * 0.5
             target_zone = demand if demand and demand.mid < price else None

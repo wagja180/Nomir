@@ -94,6 +94,15 @@ main.py          # سطر الأوامر (analyze / backtest / trade)
 | `EXCHANGE_SANDBOX` | استخدام testnet/sandbox | `true` |
 | `RISK_PER_TRADE` | نسبة رأس المال المخاطر بها لكل صفقة | `0.01` (1%) |
 | `MIN_REWARD_RISK_RATIO` | أقل نسبة مكافأة/خطر مقبولة للإشارة | `1.5` |
+| `ZONE_PROXIMITY_PCT` | أقصى مسافة من منطقة عرض/طلب لقبول الإشارة | `0.006` (0.6%) |
+| `REQUIRE_TREND_ALIGNMENT` | اشتراط توافق الإشارة مع اتجاه EMA50/EMA200 العام | `true` |
+
+تعديل هذه القيم الثلاث الأخيرة يتحكم بتكرار الإشارات مقابل جودتها — **اختبرها دائماً عبر
+`backtest` على بيانات حقيقية قبل تفعيلها في `watch --live`**:
+```bash
+# مثال: اختبار إعداد أكثر تساهلاً
+ZONE_PROXIMITY_PCT=0.012 MIN_REWARD_RISK_RATIO=1.2 python main.py backtest --symbol BTC/USDT --timeframe 1h --candles 1500
+```
 
 ## المراقبة المستمرة (watch) — تحليل وتنفيذ تلقائي دون تدخل
 
