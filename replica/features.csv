@@ -1,0 +1,46 @@
+feature,area,priority,original,clone,notes
+Clinic profile page listing bookable services (S01),booking page,must,yes,no,unverified - prior knowledge; cal.com/<username>
+Service page with info panel: title duration location description (S02),booking page,must,yes,no,unverified
+Month calendar highlighting available days (S02),booking page,must,yes,no,unverified
+Time slot list for the selected day (S02),booking page,must,yes,no,unverified
+Automatic time zone detection with manual selector,booking page,must,yes,no,unverified; default to clinic timezone for in-person visits
+Booking form with name and email (S03),booking form,must,yes,no,unverified; clinic: phone should be required
+Phone number field,booking form,must,yes,no,unverified; key field for a clinic
+Form validation with inline errors,booking form,must,yes,no,unverified
+Book without creating an account,booking page,must,yes,no,unverified
+Slot taken while filling the form is rejected cleanly,booking form,must,yes,no,unverified; needs DB-level double-booking guard
+Confirmation page with booking details (S04),confirmation,must,yes,no,unverified
+Confirmation email to patient and clinic,notifications,must,yes,no,unverified
+Guest cancels from a link with optional reason (S05),manage booking,must,yes,no,unverified
+Guest reschedules from a link (S06),manage booking,must,yes,no,unverified
+Weekly availability and date overrides (days off),availability,must,yes,no,unverified; config only - no admin UI in this slice
+Minimum notice before a booking,availability,must,yes,no,unverified
+Mobile layout (stacked panels),booking page,must,yes,no,unverified
+Buffer time before and after appointments,availability,should,yes,no,unverified
+Future booking window (e.g. next 30 days only),availability,should,yes,no,unverified
+Daily or weekly booking limits,availability,should,yes,no,unverified
+Custom booking questions (text select checkbox radio),booking form,should,yes,no,unverified; clinic: reason for visit / new or returning patient
+Notes field,booking form,should,yes,no,unverified
+Add to calendar (Google Outlook ICS),confirmation,should,yes,no,unverified
+Email reminder before the appointment,notifications,should,yes,no,unverified; scheduled job
+Requires confirmation (pending until clinic approves),booking page,should,yes,no,unverified
+Multiple practitioners with per-doctor booking pages,team,should,yes,no,unverified; Cal.com teams
+404 / unavailable service page (S07),booking page,should,yes,no,unverified
+Arabic UI and right-to-left layout,i18n,should,partial,no,unverified; Cal.com has translations - RTL quality unknown
+12h / 24h time toggle,booking page,should,yes,no,unverified
+Empty state with jump to next available date,booking page,should,yes,no,unverified
+Any available doctor (round-robin),team,could,yes,no,unverified
+Multiple duration options per service,booking page,could,yes,no,unverified
+Weekly and column calendar layouts,booking page,could,yes,no,unverified
+Dark mode and brand colour,booking page,could,yes,no,unverified
+Add guests (e.g. a companion),booking form,could,yes,no,unverified
+Seats: several patients per slot (group sessions),booking page,could,yes,no,unverified
+Embed booking page on the clinic website,sharing,could,yes,no,unverified
+Redirect to a custom page after booking,confirmation,could,yes,no,unverified
+Read doctor busy times from Google Calendar,integrations,could,yes,no,unverified; official Google Calendar API only
+Pay or deposit at booking,payments,skip,yes,skip,out of booking-page scope for now; add later with Stripe if needed
+WhatsApp / SMS reminders,notifications,skip,yes,skip,needs a paid provider account (Twilio / WhatsApp Business API); revisit after MVP
+Cal.com dashboard and account settings,admin,skip,yes,skip,outside the requested slice
+App store of third-party integrations,integrations,skip,yes,skip,partner network is not part of the product you can rebuild
+Medical records / diagnosis storage,health,skip,no,skip,regulated health data; collect administrative info only
+Cal.com branding logo and copy,brand,skip,yes,skip,owned by Cal.com; rebrand via /replica-brand
