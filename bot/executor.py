@@ -131,21 +131,53 @@ def close_position(
         logger.info(msg)
         return ExecutionResult(dry_run=True, order=None, message=msg)
 
-    try:
-        for open_order in exchange.fetch_open_orders(symbol):
-            exchange.cancel_order(open_order["id"], symbol)
-    except Exception as exc:
-        logger.warning("تعذر إلغاء الأوامر المعلّقة قبل الإغلاق: %s", exc)
+    _cancel_open_orders(exchange, symbol)
 
     try:
         order = exchange.create_order(symbol, type="market", side=opposite_side, amount=position.quantity)
     except ccxt.InsufficientFunds as exc:
-        # الأرجح أن أمر OCO (الوقف/الهدف) على المنصة نفّذ الصفقة بالفعل قبل أن
-        # تصل حلقة المراقبة لنفس قرار الإغلاق، فلم يعد هناك رصيد كافٍ لإغلاقها
-        # يدوياً مرة أخرى. نعتبرها مُغلقة فعلاً بدل تكرار المحاولة كل دورة.
-        msg = f"الصفقة مُغلقة على المنصة على الأرجح (رصيد غير كافٍ لإغلاقها يدوياً): {exc}"
+        # رصيد غير كافٍ للإغلاق له سببان مختلفان تماماً، ويجب التمييز بينهما
+        # بدقة قبل التخلي عن تتبّع الصفقة:
+        #   1) لا توجد أوامر معلّقة على المنصة الآن → الأرجح أن أمر OCO نفّذ
+        #      الصفقة فعلاً قبل وصولنا لنفس القرار. الصفقة مُغلقة بالفعل.
+        #   2) لا تزال أوامر معلّقة موجودة (فشل إلغاؤها أعلاه) → العملة لا
+        #      تزال محجوزة بها، والصفقة لم تُغلق فعلياً. يجب عدم مسح الحالة.
+        try:
+            remaining = exchange.fetch_open_orders(symbol)
+        except Exception:
+            remaining = None  # تعذّر التأكد؛ نتعامل معه بحذر كأنه لا يزال مفتوحاً
+
+        if remaining:
+            msg = (
+                f"تعذر إغلاق الصفقة: لا تزال {len(remaining)} أوامر معلّقة تحجز الرصيد "
+                f"ولم يُمكن إلغاؤها. الصفقة لا تزال مفتوحة فعلياً، سنعيد المحاولة لاحقاً: {exc}"
+            )
+            logger.error(msg)
+            return ExecutionResult(dry_run=False, order=None, message=msg, already_closed=False)
+
+        msg = f"الصفقة مُغلقة على المنصة على الأرجح (نفّذ أمر OCO قبل وصولنا لنفس القرار): {exc}"
         logger.warning(msg)
         return ExecutionResult(dry_run=False, order=None, message=msg, already_closed=True)
 
     logger.warning("تم إغلاق الصفقة الحقيقية: %s", order)
     return ExecutionResult(dry_run=False, order=order, message=f"تم إغلاق الصفقة بأمر {opposite_side} حقيقي بكمية {position.quantity:.6f}")
+
+
+def _cancel_open_orders(exchange: ccxt.Exchange, symbol: str) -> None:
+    """يلغي كل الأوامر المعلّقة لهذا الرمز، بما فيها أوامر OCO المرتبطة (التي
+    تحتاج إلغاء عبر orderListId لا عبر معرّف الأمر المفرد وحده على Binance)."""
+    try:
+        open_orders = exchange.fetch_open_orders(symbol)
+    except Exception as exc:
+        logger.warning("تعذر جلب الأوامر المعلّقة: %s", exc)
+        return
+
+    for open_order in open_orders:
+        order_list_id = (open_order.get("info") or {}).get("orderListId")
+        try:
+            if order_list_id and str(order_list_id) != "-1":
+                exchange.cancel_order(open_order["id"], symbol, params={"orderListId": order_list_id})
+            else:
+                exchange.cancel_order(open_order["id"], symbol)
+        except Exception as exc:
+            logger.warning("تعذر إلغاء الأمر المعلّق %s: %s", open_order.get("id"), exc)
