@@ -16,7 +16,7 @@ import sys
 import time
 
 from bot.config import config
-from bot.data_fetcher import build_exchange, fetch_ohlcv, fetch_quote_balance
+from bot.data_fetcher import build_exchange, fetch_base_balance, fetch_ohlcv, fetch_quote_balance
 from bot.executor import close_position, execute_signal
 from bot.indicators import add_indicators
 from bot.notify import notify
@@ -169,25 +169,41 @@ def cmd_watch(args):
                         else:
                             balance_quote = args.balance or 1000.0
                         sizing = compute_position_size(balance_quote, signal)
-                        result = execute_signal(exchange, args.symbol, signal, sizing, live=live)
-                        print(f"[{ts}] إشارة {signal.side} جديدة! {result}")
-                        notify(
-                            f"إشارة {signal.side} جديدة — {args.symbol}",
-                            f"سعر الدخول {signal.price:.6f} | وقف {signal.stop_loss:.6f} | هدف {signal.take_profit:.6f}",
-                        )
-                        if sizing.quantity > 0:
-                            save_open_position(
-                                state_path,
-                                OpenPosition(
-                                    symbol=args.symbol,
-                                    side=signal.side,
-                                    entry_price=signal.price,
-                                    stop_loss=signal.stop_loss,
-                                    take_profit=signal.take_profit,
-                                    quantity=sizing.quantity,
-                                    opened_at=ts,
-                                ),
+
+                        # التداول الفوري (Spot) لا يسمح بالبيع على المكشوف: تجاهل
+                        # إشارات البيع بأمان إن لم نملك كمية كافية من عملة الأساس،
+                        # بدل تكرار محاولة فاشلة كل دورة بخطأ "رصيد غير كافٍ".
+                        skip_sell = False
+                        if live and signal.side == "sell":
+                            base_balance = fetch_base_balance(exchange, args.symbol)
+                            if base_balance < sizing.quantity:
+                                base = args.symbol.split("/")[0]
+                                print(
+                                    f"[{ts}] إشارة بيع لكن لا يوجد رصيد كافٍ من {base} "
+                                    f"({base_balance:.8f} متاح، {sizing.quantity:.8f} مطلوب). تم تجاهلها."
+                                )
+                                skip_sell = True
+
+                        if not skip_sell:
+                            result = execute_signal(exchange, args.symbol, signal, sizing, live=live)
+                            print(f"[{ts}] إشارة {signal.side} جديدة! {result}")
+                            notify(
+                                f"إشارة {signal.side} جديدة — {args.symbol}",
+                                f"سعر الدخول {signal.price:.6f} | وقف {signal.stop_loss:.6f} | هدف {signal.take_profit:.6f}",
                             )
+                            if sizing.quantity > 0:
+                                save_open_position(
+                                    state_path,
+                                    OpenPosition(
+                                        symbol=args.symbol,
+                                        side=signal.side,
+                                        entry_price=signal.price,
+                                        stop_loss=signal.stop_loss,
+                                        take_profit=signal.take_profit,
+                                        quantity=sizing.quantity,
+                                        opened_at=ts,
+                                    ),
+                                )
                     else:
                         print(f"[{ts}] لا توجد إشارة الآن. السعر={price:.6f}")
             except Exception as exc:  # لا نوقف المراقبة المستمرة بسبب خطأ عابر (شبكة، إلخ)

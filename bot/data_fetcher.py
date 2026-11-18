@@ -52,6 +52,15 @@ def fetch_quote_balance(exchange: ccxt.Exchange, symbol: str) -> float:
     return float(balance.get("free", {}).get(quote) or 0.0)
 
 
+def fetch_base_balance(exchange: ccxt.Exchange, symbol: str) -> float:
+    """الرصيد المتاح (الحر) بعملة الأساس (مثل BTC في BTC/USDT). يُستخدم للتحقق
+    قبل تنفيذ إشارة بيع: التداول الفوري (Spot) لا يسمح ببيع عملة غير مملوكة
+    فعلياً (لا يوجد بيع على المكشوف كما في الهامش/العقود الآجلة)."""
+    base = symbol.split("/")[0]
+    balance = exchange.fetch_balance()
+    return float(balance.get("free", {}).get(base) or 0.0)
+
+
 def fetch_ohlcv(
     exchange: ccxt.Exchange,
     symbol: str,
