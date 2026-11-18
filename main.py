@@ -145,7 +145,20 @@ def cmd_watch(args):
 
                 position = load_open_position(state_path)
 
+                # صفقة محاكاة (dry-run) محفوظة سابقاً يجب ألا تُغلَق أبداً بأمر
+                # حقيقي إن شُغّل البوت لاحقاً بوضع live (والعكس: صفقة حقيقية لا
+                # يجوز التعامل معها إلا بأوامر حقيقية). عدم التطابق يعني أن ملف
+                # الحالة من جلسة بوضع مختلف؛ نتعامل معها دائماً كمحاكاة فقط.
+                position_is_real = bool(position and position.live)
+                close_live = live and position_is_real
+
                 if position:
+                    if live != position_is_real:
+                        print(
+                            f"[{ts}] تحذير: صفقة محفوظة بوضع "
+                            f"{'حقيقي' if position_is_real else 'تجربة'} أثناء تشغيل البوت الآن بوضع "
+                            f"{'حقيقي' if live else 'تجربة'} — ستُعامَل كمحاكاة فقط لتفادي أمر حقيقي خاطئ."
+                        )
                     hit_stop = (position.side == "buy" and float(last["low"]) <= position.stop_loss) or (
                         position.side == "sell" and float(last["high"]) >= position.stop_loss
                     )
@@ -154,7 +167,7 @@ def cmd_watch(args):
                     )
                     if hit_stop or hit_target:
                         reason = "وقف الخسارة" if hit_stop else "الهدف"
-                        result = close_position(exchange, args.symbol, position, live=live)
+                        result = close_position(exchange, args.symbol, position, live=close_live)
                         print(f"[{ts}] إغلاق الصفقة ({position.side}) عند {reason}. {result}")
                         notify(f"إغلاق صفقة {position.side} — {args.symbol}", f"{reason} عند {price:.6f}")
                         clear_open_position(state_path)
@@ -202,6 +215,7 @@ def cmd_watch(args):
                                         take_profit=signal.take_profit,
                                         quantity=sizing.quantity,
                                         opened_at=ts,
+                                        live=live,
                                     ),
                                 )
                     else:

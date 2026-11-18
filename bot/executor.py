@@ -21,10 +21,14 @@ logger = logging.getLogger("bot.executor")
 
 
 class ExecutionResult:
-    def __init__(self, dry_run: bool, order: dict | None, message: str):
+    def __init__(self, dry_run: bool, order: dict | None, message: str, already_closed: bool = False):
         self.dry_run = dry_run
         self.order = order
         self.message = message
+        # True فقط عند اكتشاف close_position أن الصفقة مُغلقة مسبقاً على
+        # المنصة (مثلاً نفّذ أمر OCO الوقف/الهدف قبل أن تصل حلقة المراقبة
+        # لنفس القرار)، فلا يوجد رصيد كافٍ لإغلاقها يدوياً مجدداً.
+        self.already_closed = already_closed
 
     def __repr__(self) -> str:
         mode = "تجربة (dry-run)" if self.dry_run else "حقيقي (live)"
@@ -133,6 +137,15 @@ def close_position(
     except Exception as exc:
         logger.warning("تعذر إلغاء الأوامر المعلّقة قبل الإغلاق: %s", exc)
 
-    order = exchange.create_order(symbol, type="market", side=opposite_side, amount=position.quantity)
+    try:
+        order = exchange.create_order(symbol, type="market", side=opposite_side, amount=position.quantity)
+    except ccxt.InsufficientFunds as exc:
+        # الأرجح أن أمر OCO (الوقف/الهدف) على المنصة نفّذ الصفقة بالفعل قبل أن
+        # تصل حلقة المراقبة لنفس قرار الإغلاق، فلم يعد هناك رصيد كافٍ لإغلاقها
+        # يدوياً مرة أخرى. نعتبرها مُغلقة فعلاً بدل تكرار المحاولة كل دورة.
+        msg = f"الصفقة مُغلقة على المنصة على الأرجح (رصيد غير كافٍ لإغلاقها يدوياً): {exc}"
+        logger.warning(msg)
+        return ExecutionResult(dry_run=False, order=None, message=msg, already_closed=True)
+
     logger.warning("تم إغلاق الصفقة الحقيقية: %s", order)
     return ExecutionResult(dry_run=False, order=order, message=f"تم إغلاق الصفقة بأمر {opposite_side} حقيقي بكمية {position.quantity:.6f}")

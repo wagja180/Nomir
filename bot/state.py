@@ -17,6 +17,11 @@ class OpenPosition:
     take_profit: float
     quantity: float
     opened_at: str
+    # هل فُتحت هذه الصفقة فعلياً على المنصة (live=True) أم أنها محاكاة فقط
+    # (dry-run)؟ ضروري لمنع جلسة live لاحقة من معاملة صفقة محاكاة كصفقة
+    # حقيقية وإرسال أمر إغلاق حقيقي بأموال حقيقية لصفقة لم تُفتح أصلاً.
+    # افتراضي False للتوافق مع ملفات حالة قديمة أُنشئت قبل إضافة هذا الحقل.
+    live: bool = False
 
 
 def load_open_position(state_path: str) -> OpenPosition | None:
