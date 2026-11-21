@@ -16,6 +16,8 @@ import logging
 import sys
 import time
 
+import pandas as pd
+
 from bot.config import config
 from bot.data_fetcher import build_exchange, fetch_base_balance, fetch_ohlcv, fetch_quote_balance
 from bot.executor import close_position, execute_signal
@@ -116,6 +118,37 @@ def cmd_trade(args):
     result = execute_signal(exchange, args.symbol, signal, sizing, live=live)
     print(result)
 
+    # هذا أمر تنفيذ لمرة واحدة (trade) لا يراقب الصفقة بعد فتحها، بخلاف watch.
+    # إن نُفّذ أمر حقيقي فعلاً، احفظ حالته بنفس آلية watch حتى يمكن لاحقاً
+    # تشغيل `watch` على نفس الرمز فيلتقط هذه الصفقة ويحميها (خاصة لو فشل
+    # وضع OCO ولم تبقَ أي حماية على المنصة إطلاقاً).
+    if live and result.order is not None:
+        state_path = f"state_{args.symbol.replace('/', '_')}.json"
+        actual_quantity = result.filled_quantity if result.filled_quantity else sizing.quantity
+        save_open_position(
+            state_path,
+            OpenPosition(
+                symbol=args.symbol,
+                side=signal.side,
+                entry_price=signal.price,
+                stop_loss=signal.stop_loss,
+                take_profit=signal.take_profit,
+                quantity=actual_quantity,
+                opened_at=_now(),
+                live=True,
+                protective_order_id=result.protective_order_id,
+                protective_order_list_id=result.protective_order_list_id,
+            ),
+        )
+        if not result.protective_order_id:
+            print(
+                f"\n⚠️  تحذير مهم: لم يُوضع أمر حماية (وقف/هدف) على المنصة لهذه الصفقة. "
+                f"حُفظت حالتها في {state_path}، لكنها بلا أي حماية فعلية حتى تُشغّل:\n"
+                f"  python main.py watch --symbol {args.symbol} --timeframe {args.timeframe} --live --confirm"
+            )
+        else:
+            print(f"\nتم حفظ حالة الصفقة في {state_path} — شغّل watch على نفس الرمز لمتابعتها تلقائياً.")
+
 
 def _now() -> str:
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -192,11 +225,25 @@ def cmd_watch(args):
                                 f"{'حقيقي' if position_is_real else 'تجربة'} أثناء تشغيل البوت الآن بوضع "
                                 f"{'حقيقي' if live else 'تجربة'} — ستُعامَل كمحاكاة فقط لتفادي أمر حقيقي خاطئ."
                             )
-                        hit_stop = (position.side == "buy" and float(last["low"]) <= position.stop_loss) or (
-                            position.side == "sell" and float(last["high"]) >= position.stop_loss
+                        # افحص كل الشموع منذ فتح الصفقة، لا الشمعة الأخيرة فقط —
+                        # لو توقف البوت أو تأخر لأي سبب (انقطاع شبكة/خادم) أكثر
+                        # من فترة شمعة واحدة، قد يكون الوقف أو الهدف قد لامسه
+                        # السعر في شمعة سابقة لم تعد هي الأخيرة في البيانات
+                        # المجلوبة الآن، فيُفوَّت تماماً لو اكتفينا بالأخيرة فقط.
+                        try:
+                            opened_at_ts = pd.Timestamp(position.opened_at)
+                            window = df[df.index >= opened_at_ts]
+                            if window.empty:
+                                window = df.iloc[[-1]]
+                        except Exception:
+                            window = df.iloc[[-1]]
+                        hit_stop = (
+                            (position.side == "buy" and (window["low"] <= position.stop_loss).any())
+                            or (position.side == "sell" and (window["high"] >= position.stop_loss).any())
                         )
-                        hit_target = (position.side == "buy" and float(last["high"]) >= position.take_profit) or (
-                            position.side == "sell" and float(last["low"]) <= position.take_profit
+                        hit_target = (
+                            (position.side == "buy" and (window["high"] >= position.take_profit).any())
+                            or (position.side == "sell" and (window["low"] <= position.take_profit).any())
                         )
                         if hit_stop or hit_target:
                             reason = "وقف الخسارة" if hit_stop else "الهدف"

@@ -56,7 +56,11 @@ def generate_signal(df: pd.DataFrame, zones: list[Zone]) -> Signal | None:
         near_demand = demand.contains(price) or price <= demand.high * (1 + proximity_pct)
         if near_demand and bullish_candle and last["rsi_14"] < 65 and uptrend:
             stop_loss = demand.low - atr_val * 0.5
-            target_zone = supply if supply and supply.mid > price else None
+            # يجب أن تكون منطقة الهدف فعلياً فوق سعر الدخول بالكامل (حدّها
+            # السفلي لا فقط منتصفها)، وإلا فقد يكون حدّها السفلي أدنى من
+            # السعر الحالي ويصبح الهدف خسارة أو تعادلاً لا ربحاً — وهذا يمر
+            # من فحص نسبة المكافأة/الخطر لأنه يعتمد على المسافة المطلقة فقط.
+            target_zone = supply if supply and supply.low > price else None
             take_profit = target_zone.low if target_zone else price + (price - stop_loss) * config.min_reward_risk_ratio
             sig = Signal(
                 side="buy",
@@ -70,7 +74,9 @@ def generate_signal(df: pd.DataFrame, zones: list[Zone]) -> Signal | None:
                     f"الاتجاه العام صاعد (EMA50>EMA200)."
                 ),
             )
-            if sig.reward_risk_ratio >= config.min_reward_risk_ratio:
+            # حارس أخير: الهدف يجب أن يكون فعلياً فوق سعر الدخول لصفقة شراء،
+            # دفاعاً إضافياً عن أي خطأ مماثل مستقبلاً في حساب الهدف.
+            if sig.reward_risk_ratio >= config.min_reward_risk_ratio and take_profit > price:
                 return sig
 
     # --- محاولة إشارة بيع عند منطقة عرض ---
@@ -78,7 +84,9 @@ def generate_signal(df: pd.DataFrame, zones: list[Zone]) -> Signal | None:
         near_supply = supply.contains(price) or price >= supply.low * (1 - proximity_pct)
         if near_supply and bearish_candle and last["rsi_14"] > 35 and downtrend:
             stop_loss = supply.high + atr_val * 0.5
-            target_zone = demand if demand and demand.mid < price else None
+            # نفس الحذر هنا: الحدّ الأعلى لمنطقة الهدف يجب أن يكون فعلياً دون
+            # سعر الدخول بالكامل، لا فقط منتصفها.
+            target_zone = demand if demand and demand.high < price else None
             take_profit = target_zone.high if target_zone else price - (stop_loss - price) * config.min_reward_risk_ratio
             sig = Signal(
                 side="sell",
@@ -92,7 +100,7 @@ def generate_signal(df: pd.DataFrame, zones: list[Zone]) -> Signal | None:
                     f"الاتجاه العام نازل (EMA50<EMA200)."
                 ),
             )
-            if sig.reward_risk_ratio >= config.min_reward_risk_ratio:
+            if sig.reward_risk_ratio >= config.min_reward_risk_ratio and take_profit < price:
                 return sig
 
     return None
