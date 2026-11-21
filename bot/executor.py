@@ -28,6 +28,8 @@ class ExecutionResult:
         message: str,
         already_closed: bool = False,
         filled_quantity: float | None = None,
+        protective_order_id: str | None = None,
+        protective_order_list_id: str | None = None,
     ):
         self.dry_run = dry_run
         self.order = order
@@ -41,6 +43,11 @@ class ExecutionResult:
         # sizing.quantity الأصلية؛ يجب استخدامها لا الكمية المطلوبة عند حفظ
         # حالة الصفقة، تفادياً لخطأ "رصيد غير كافٍ" لاحقاً عند الإغلاق.
         self.filled_quantity = filled_quantity
+        # معرّف أمر الحماية (OCO) الذي وُضع فعلاً لهذه الصفقة تحديداً، إن نجح
+        # وضعه. يُحفظ في حالة الصفقة لاستخدامه لاحقاً عند الإغلاق بدل إلغاء كل
+        # الأوامر المعلّقة على الرمز (التي قد تخص المستخدم يدوياً لا البوت).
+        self.protective_order_id = protective_order_id
+        self.protective_order_list_id = protective_order_list_id
 
     def __repr__(self) -> str:
         mode = "تجربة (dry-run)" if self.dry_run else "حقيقي (live)"
@@ -81,13 +88,17 @@ def execute_signal(
     filled_quantity = _actual_filled_base_quantity(order, symbol, side, fallback=sizing.quantity)
 
     opposite_side = "sell" if side == "buy" else "buy"
-    _place_protective_oco(exchange, symbol, opposite_side, filled_quantity, signal.stop_loss, signal.take_profit)
+    protective_order_id, protective_order_list_id = _place_protective_oco(
+        exchange, symbol, opposite_side, filled_quantity, signal.stop_loss, signal.take_profit
+    )
 
     return ExecutionResult(
         dry_run=False,
         order=order,
         message=f"تم تنفيذ أمر {side} حقيقي بكمية {filled_quantity:.6f}",
         filled_quantity=filled_quantity,
+        protective_order_id=protective_order_id,
+        protective_order_list_id=protective_order_list_id,
     )
 
 
@@ -117,19 +128,24 @@ def _place_protective_oco(
     quantity: float,
     stop_loss: float,
     take_profit: float,
-) -> None:
+) -> tuple[str | None, str | None]:
     """يحاول وضع أمر OCO واحد (وقف خسارة + جني ربح مرتبطان بنفس الكمية) على
     المنصة مباشرة بعد الدخول. نوع "stop_market" المنفصل غير مقبول على أسواق
     Binance Spot (يُرفض بخطأ "not a valid order type"), ووضع أمرين منفصلين
     (وقف وهدف) لنفس الكمية دون ربطهما بـ OCO قد يتطلب حجز الكمية مرتين.
 
-    إن تعذّر وضع OCO (منصة لا تدعمه، أو خطأ آخر)، تبقى حماية الصفقة معتمدة
-    بالكامل على حلقة `watch` في هذا البوت التي تراقب السعر وتُغلق الصفقة يدوياً
-    عند الوصول للوقف أو الهدف — لذا يجب أن تبقى هذه العملية تعمل باستمرار."""
+    إن تعذّر وضع OCO (منصة لا تدعمه لهذا الزوج تحديداً — يحدث فعلياً مع بعض
+    أزواج Binance، أو خطأ آخر)، تبقى حماية الصفقة معتمدة بالكامل على حلقة
+    `watch` في هذا البوت التي تراقب السعر وتُغلق الصفقة يدوياً عند الوصول
+    للوقف أو الهدف — لذا يجب أن تبقى هذه العملية تعمل باستمرار.
+
+    يُرجع (order_id, order_list_id) عند النجاح لحفظهما في حالة الصفقة، حتى
+    يُلغى هذا الأمر بالذات فقط عند الإغلاق لاحقاً، لا كل الأوامر المعلّقة على
+    الرمز (التي قد يضعها المستخدم يدوياً لأغراض أخرى)."""
 
     stop_limit_price = stop_loss * (0.995 if opposite_side == "sell" else 1.005)
     try:
-        exchange.create_order(
+        oco_order = exchange.create_order(
             symbol,
             "oco",
             opposite_side,
@@ -141,7 +157,9 @@ def _place_protective_oco(
                 "stopLimitTimeInForce": "GTC",
             },
         )
-        return
+        order_id = oco_order.get("id")
+        order_list_id = (oco_order.get("info") or {}).get("orderListId")
+        return (str(order_id) if order_id else None, str(order_list_id) if order_list_id else None)
     except Exception as exc:
         logger.warning("تعذر وضع أمر OCO (وقف+هدف مرتبطان) على المنصة: %s", exc)
 
@@ -149,6 +167,7 @@ def _place_protective_oco(
         "لا توجد أوامر وقف/هدف مُعلّقة على المنصة لهذه الصفقة. إغلاقها يعتمد "
         "بالكامل على استمرار عمل حلقة watch لمراقبتها يدوياً."
     )
+    return (None, None)
 
 
 def close_position(
@@ -169,35 +188,32 @@ def close_position(
         logger.info(msg)
         return ExecutionResult(dry_run=True, order=None, message=msg)
 
-    _cancel_open_orders(exchange, symbol)
+    _cancel_position_protective_order(exchange, symbol, position.protective_order_id, position.protective_order_list_id)
 
     try:
         order = exchange.create_order(symbol, type="market", side=opposite_side, amount=position.quantity)
     except ccxt.InsufficientFunds as exc:
         # رصيد غير كافٍ للإغلاق له سببان مختلفان تماماً، ويجب التمييز بينهما
         # بدقة قبل التخلي عن تتبّع الصفقة:
-        #   1) لا توجد أوامر معلّقة على المنصة الآن → الأرجح أن أمر OCO نفّذ
-        #      الصفقة فعلاً قبل وصولنا لنفس القرار. الصفقة مُغلقة بالفعل.
-        #   2) لا تزال أوامر معلّقة موجودة (فشل إلغاؤها أعلاه) → العملة لا
-        #      تزال محجوزة بها، والصفقة لم تُغلق فعلياً. يجب عدم مسح الحالة.
-        try:
-            remaining = exchange.fetch_open_orders(symbol)
-        except Exception:
-            remaining = None  # تعذّر التأكد؛ نتعامل معه بحذر كأنه لا يزال مفتوحاً
-
-        if remaining:
+        #   1) أمر الحماية (OCO) الخاص بهذه الصفقة تحديداً لا يزال معلّقاً
+        #      (فشل إلغاؤه أعلاه) → العملة لا تزال محجوزة به، والصفقة لم
+        #      تُغلق فعلياً. يجب عدم مسح الحالة.
+        #   2) لا يوجد أمر حماية معلّق خاص بنا (أُلغي بنجاح، أو لم يُوضع
+        #      أصلاً لأن OCO غير مدعوم لهذا الزوج) → السبب الحقيقي غير معروف
+        #      بعد؛ تحقّق من الرصيد الفعلي قبل أي استنتاج.
+        if _is_order_still_open(exchange, symbol, position.protective_order_id):
             msg = (
-                f"تعذر إغلاق الصفقة: لا تزال {len(remaining)} أوامر معلّقة تحجز الرصيد "
-                f"ولم يُمكن إلغاؤها. الصفقة لا تزال مفتوحة فعلياً، سنعيد المحاولة لاحقاً: {exc}"
+                f"تعذر إغلاق الصفقة: أمر الحماية (OCO) الخاص بها لا يزال معلّقاً "
+                f"ولم يُمكن إلغاؤه. الصفقة لا تزال مفتوحة فعلياً، سنعيد المحاولة لاحقاً: {exc}"
             )
             logger.error(msg)
             return ExecutionResult(dry_run=False, order=None, message=msg, already_closed=False)
 
-        # لا توجد أوامر معلّقة الآن، لكن هذا وحده لا يكفي لاستنتاج أن الصفقة
-        # أُغلقت فعلاً عبر OCO — فقد لا يكون OCO مدعوماً أصلاً لهذا الزوج (يحدث
-        # فعلياً مع بعض أزواج Binance)، وعندها "لا توجد أوامر معلّقة" صحيحة منذ
-        # البداية دون أي علاقة بإغلاق حقيقي. تحقّق من الرصيد الفعلي المتبقي من
-        # عملة الأساس قبل اتخاذ أي قرار.
+        # لا يوجد أمر حماية خاص بنا لا يزال معلّقاً، لكن هذا وحده لا يكفي
+        # لاستنتاج أن الصفقة أُغلقت فعلاً عبر OCO — فقد لا يكون OCO مدعوماً
+        # أصلاً لهذا الزوج (يحدث فعلياً مع بعض أزواج Binance)، وعندها "لا
+        # يوجد أمر معلّق" صحيح منذ البداية دون أي علاقة بإغلاق حقيقي. تحقّق
+        # من الرصيد الفعلي المتبقي من عملة الأساس قبل اتخاذ أي قرار.
         base_asset = symbol.split("/")[0]
         try:
             balance = exchange.fetch_balance()
@@ -220,14 +236,26 @@ def close_position(
         # بدل التخلي عن تتبّعها دون سبب حقيقي.
         try:
             retry_order = exchange.create_order(symbol, type="market", side=opposite_side, amount=available)
-        except Exception as retry_exc:
+        except ccxt.InvalidOrder as dust_exc:
+            # هذا الخطأ تحديداً (وليس أي استثناء آخر) يعني أن الكمية المتبقية
+            # أقل من الحد الأدنى المسموح بالتداول (غبار) — آمن اعتبارها
+            # مُغلقة فعلياً من الناحية العملية، إذ لا يمكن بيعها أصلاً.
             msg = (
-                f"لا يزال هناك رصيد فعلي {available:.8f} {base_asset} لكن تعذر بيعه أيضاً "
-                f"(قد تكون كمية غبار صغيرة جداً دون الحد الأدنى المسموح). سنعتبرها مُغلقة "
-                f"فعلياً من الناحية العملية: {retry_exc}"
+                f"لا يزال هناك رصيد فعلي {available:.8f} {base_asset} لكنه كمية غبار "
+                f"أقل من الحد الأدنى المسموح بالبيع. سنعتبرها مُغلقة فعلياً: {dust_exc}"
             )
             logger.warning(msg)
             return ExecutionResult(dry_run=False, order=None, message=msg, already_closed=True)
+        except Exception as retry_exc:
+            # أي خطأ آخر (شبكة، تقييد مؤقت، إلخ) قد يكون عابراً — لا نفترض
+            # أبداً أن الصفقة أُغلقت لمجرد فشل محاولة إعادة البيع؛ هذا بالضبط
+            # ما يسبب فقدان تتبّع صفقة لا تزال مفتوحة فعلياً بأموال حقيقية.
+            msg = (
+                f"لا يزال هناك رصيد فعلي {available:.8f} {base_asset} لكن تعذر بيعه الآن "
+                f"لسبب آخر غير واضح أنه نهائي. الصفقة تبقى مُتتبَّعة لإعادة المحاولة لاحقاً: {retry_exc}"
+            )
+            logger.error(msg)
+            return ExecutionResult(dry_run=False, order=None, message=msg, already_closed=False)
 
         logger.warning(
             "تم إغلاق الصفقة الحقيقية بالكمية الفعلية المتاحة (%.8f بدل %.8f المسجّلة بسبب فرق رسوم/تقريب): %s",
@@ -246,21 +274,31 @@ def close_position(
     return ExecutionResult(dry_run=False, order=order, message=f"تم إغلاق الصفقة بأمر {opposite_side} حقيقي بكمية {position.quantity:.6f}")
 
 
-def _cancel_open_orders(exchange: ccxt.Exchange, symbol: str) -> None:
-    """يلغي كل الأوامر المعلّقة لهذا الرمز، بما فيها أوامر OCO المرتبطة (التي
-    تحتاج إلغاء عبر orderListId لا عبر معرّف الأمر المفرد وحده على Binance)."""
+def _cancel_position_protective_order(
+    exchange: ccxt.Exchange, symbol: str, order_id: str | None, order_list_id: str | None
+) -> None:
+    """يلغي أمر الحماية (OCO) الخاص بهذه الصفقة تحديداً فقط، إن كان معروفاً،
+    دون المساس بأي أوامر أخرى قد يضعها المستخدم يدوياً على نفس الرمز لأغراض
+    غير متعلقة بالبوت."""
+    if not order_id:
+        return
+    try:
+        if order_list_id:
+            exchange.cancel_order(order_id, symbol, params={"orderListId": order_list_id})
+        else:
+            exchange.cancel_order(order_id, symbol)
+    except Exception as exc:
+        logger.warning("تعذر إلغاء أمر الحماية (OCO) الخاص بالصفقة %s: %s", order_id, exc)
+
+
+def _is_order_still_open(exchange: ccxt.Exchange, symbol: str, order_id: str | None) -> bool:
+    """هل أمر الحماية الخاص بنا (إن وُجد) لا يزال معلّقاً فعلاً على المنصة؟
+    None إن لم يُوضع أصلاً أي أمر حماية من قِبلنا (OCO فشل أو غير مدعوم)، وفي
+    هذه الحالة لا شيء من جهتنا يحجز الرصيد."""
+    if not order_id:
+        return False
     try:
         open_orders = exchange.fetch_open_orders(symbol)
-    except Exception as exc:
-        logger.warning("تعذر جلب الأوامر المعلّقة: %s", exc)
-        return
-
-    for open_order in open_orders:
-        order_list_id = (open_order.get("info") or {}).get("orderListId")
-        try:
-            if order_list_id and str(order_list_id) != "-1":
-                exchange.cancel_order(open_order["id"], symbol, params={"orderListId": order_list_id})
-            else:
-                exchange.cancel_order(open_order["id"], symbol)
-        except Exception as exc:
-            logger.warning("تعذر إلغاء الأمر المعلّق %s: %s", open_order.get("id"), exc)
+    except Exception:
+        return True  # تعذّر التأكد؛ نتعامل بحذر كأنه لا يزال معلّقاً
+    return any(str(o.get("id")) == str(order_id) for o in open_orders)

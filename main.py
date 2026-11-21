@@ -191,12 +191,21 @@ def cmd_watch(args):
                             result = close_position(exchange, symbol, position, live=close_live)
                             print(f"[{ts}] {tag} إغلاق الصفقة ({position.side}) عند {reason}. {result}")
                             notify(f"إغلاق صفقة {position.side} — {symbol}", f"{reason} عند {price:.6f}")
-                            # لا تُمسح حالة الصفقة إلا إذا أُغلقت فعلاً (محاكاة،
-                            # أو أمر بيع حقيقي نُفّذ، أو تأكدنا أنها مُغلقة مسبقاً).
-                            # إن كانت لا تزال مفتوحة فعلياً (already_closed=False
-                            # وبلا order)، تبقى مُتتبَّعة لإعادة المحاولة في الدورة
-                            # القادمة، تفادياً لصفقة تُفتح دون أن يتابعها البوت.
-                            if result.dry_run or result.order is not None or result.already_closed:
+                            # لا تُمسح حالة الصفقة إلا إذا أُغلقت فعلاً:
+                            #   - محاكاة كاملة (الصفقة نفسها غير حقيقية أصلاً): آمن.
+                            #   - أمر بيع حقيقي نُفّذ فعلاً (result.order موجود).
+                            #   - تأكدنا أنها مُغلقة مسبقاً فعلاً على المنصة.
+                            # أما إن كانت الصفقة حقيقية (position_is_real) لكن
+                            # البوت يعمل الآن بوضع تجربة (close_live=False ومن ثم
+                            # result.dry_run=True)، فهذا لا يعني أنها أُغلقت على
+                            # المنصة فعلاً — يجب أن تبقى مُتتبَّعة حتى تُغلق بجلسة
+                            # حقيقية فعلاً، وإلا فُقد تتبّعها دون أي إغلاق حقيقي.
+                            safe_to_clear = (
+                                (result.dry_run and not position_is_real)
+                                or result.order is not None
+                                or result.already_closed
+                            )
+                            if safe_to_clear:
                                 clear_open_position(state_path)
                                 open_count -= 1
                             else:
@@ -257,6 +266,8 @@ def cmd_watch(args):
                                             quantity=actual_quantity,
                                             opened_at=ts,
                                             live=live,
+                                            protective_order_id=result.protective_order_id if live else None,
+                                            protective_order_list_id=result.protective_order_list_id if live else None,
                                         ),
                                     )
                                     open_count += 1
