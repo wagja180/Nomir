@@ -1,0 +1,22 @@
+[Unit]
+Description=Nomir market analysis & trading bot (watch mode)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# عدّل هذا المسار إلى مكان المشروع الفعلي على الخادم
+WorkingDirectory=/opt/nomir/Nomir
+# عدّل المسار إلى بايثون داخل البيئة الافتراضية إن استخدمتها
+ExecStart=/opt/nomir/Nomir/venv/bin/python -u main.py watch --symbol BTC/USDT --timeframe 1h --interval-minutes 15 --live --confirm
+Restart=always
+RestartSec=30
+# توقف فعلي عند طلب الإيقاف بدلاً من قتل فوري قد يقطع أمراً قيد التنفيذ
+KillSignal=SIGINT
+TimeoutStopSec=30
+StandardOutput=append:/opt/nomir/Nomir/watch.log
+StandardError=append:/opt/nomir/Nomir/watch.log
+User=nomir
+
+[Install]
+WantedBy=multi-user.target
