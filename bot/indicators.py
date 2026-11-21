@@ -16,6 +16,12 @@ def rsi(series: pd.Series, period: int = 14) -> pd.Series:
     avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
     rs = avg_gain / avg_loss.replace(0, np.nan)
     out = 100 - (100 / (1 + rs))
+    # متوسط خسارة صفر مع متوسط ربح موجب يعني صعوداً صافياً دون أي تراجع خلال
+    # الفترة: يجب أن يكون RSI=100 (ذروة شراء فعلية)، لا 50 محايد — قيمة محايدة
+    # خاطئة هنا قد تُمرّر إشارة شراء كان يجب رفضها بشرط RSI.
+    out = out.where(avg_loss != 0, 100.0)
+    # الاستثناء الوحيد: لا حركة إطلاقاً (ربح وخسارة كلاهما صفر) فعلاً محايد.
+    out = out.where(~((avg_gain == 0) & (avg_loss == 0)), 50.0)
     return out.fillna(50)
 
 

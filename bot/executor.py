@@ -188,6 +188,21 @@ def close_position(
         logger.info(msg)
         return ExecutionResult(dry_run=True, order=None, message=msg)
 
+    # إن كان أمر الحماية (OCO) الخاص بهذه الصفقة لم يعد معلّقاً أصلاً قبل أي
+    # محاولة إلغاء منّا، فالأرجح أنه نُفّذ بالفعل (امتلأ على المنصة) وليس أننا
+    # ألغيناه — لأننا لم نحاول بعد. في هذه الحالة يجب عدم إرسال أي أمر سوق
+    # جديد إطلاقاً: لو كان المستخدم يملك رصيداً إضافياً من نفس العملة لسبب
+    # آخر، أمر سوق بكمية الصفقة قد ينجح فعلياً ويبيع/يشتري من ذلك الرصيد غير
+    # المرتبط بهذه الصفقة، منفّذاً صفقة ثانية غير مقصودة بأموال أخرى.
+    if position.protective_order_id and not _is_order_still_open(exchange, symbol, position.protective_order_id):
+        msg = (
+            "أمر الحماية (OCO) الخاص بالصفقة لم يعد معلّقاً قبل أي محاولة إلغاء منّا "
+            "— الأرجح أنه نُفّذ بالفعل على المنصة. لن يُرسل أي أمر سوق إضافي تفادياً "
+            "لتنفيذ صفقة ثانية غير مقصودة."
+        )
+        logger.warning(msg)
+        return ExecutionResult(dry_run=False, order=None, message=msg, already_closed=True)
+
     _cancel_position_protective_order(exchange, symbol, position.protective_order_id, position.protective_order_list_id)
 
     try:

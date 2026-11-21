@@ -99,6 +99,18 @@ def cmd_trade(args):
         f"قيمة الصفقة: {sizing.position_value:.2f}"
     )
 
+    # التداول الفوري (Spot) لا يسمح بالبيع على المكشوف: تحقق من وجود رصيد كافٍ
+    # من عملة الأساس قبل إرسال أمر بيع حقيقي، كما يفعل أمر watch تماماً.
+    if live and signal.side == "sell":
+        base_balance = fetch_base_balance(exchange, args.symbol)
+        if base_balance < sizing.quantity:
+            base = args.symbol.split("/")[0]
+            print(
+                f"إشارة بيع لكن لا يوجد رصيد كافٍ من {base} "
+                f"({base_balance:.8f} متاح، {sizing.quantity:.8f} مطلوب). لم يُنفذ أي أمر."
+            )
+            return
+
     if live:
         print("\n⚠️  تحذير: سيتم تنفيذ أمر حقيقي بأموال حقيقية الآن.")
     result = execute_signal(exchange, args.symbol, signal, sizing, live=live)
