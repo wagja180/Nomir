@@ -1,0 +1,47 @@
+# ===== إعدادات بوت الفوركس =====
+
+# الوضع: paper (محاكاة — ابدأ به) | signals (تنبيهات فقط) | oanda_practice | oanda_live
+mode: paper
+account_currency: USD
+timeframe: H1          # M15 | M30 | H1 | H4 | D1
+poll_seconds: 300      # كل كم ثانية يفحص السوق
+
+symbols: [EURUSD, GBPUSD, USDJPY, AUDUSD, USDCAD, USDCHF, EURJPY, XAUUSD]
+
+data:
+  provider: yahoo      # yahoo (مجاني) | oanda (يتطلب OANDA_TOKEN) | csv
+  oanda_practice: true
+  csv_folder: data
+
+strategy:
+  ema_fast: 50
+  ema_slow: 200
+  adx_min: 20
+  rsi_pullback: 40
+  sl_atr_mult: 1.5     # وقف الخسارة = 1.5 × ATR
+  rr: 2.0              # الهدف = ضعف المخاطرة
+  min_score: 70        # أقل قوة إشارة مقبولة (0-100)
+  news_weight: 5
+
+risk:
+  risk_per_trade_pct: 1.0
+  max_open_trades: 3
+  max_daily_loss_pct: 3.0
+  min_units: 1000
+
+news:
+  refresh_minutes: 30
+  blackout_impact: High      # لا تفتح صفقات قرب الأخبار عالية التأثير
+  blackout_before_min: 30
+  blackout_after_min: 30
+  rss_feeds:
+    - https://www.fxstreet.com/rss/news
+    - https://www.forexlive.com/feed/news
+
+paper:
+  balance: 10000
+  spread_pips: 1.0
+  state_file: paper_state.json
+
+notify:
+  telegram: true       # يعمل إذا ضبطت TELEGRAM_BOT_TOKEN و TELEGRAM_CHAT_ID
