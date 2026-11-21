@@ -1,43 +1,47 @@
 import json
+import math
+import random
 from datetime import datetime, timedelta, timezone
 
-import numpy as np
-import pandas as pd
 import pytest
 
 from forexbot import indicators as ta
 from forexbot.backtest import run_backtest
 from forexbot.broker import PaperBroker
+from forexbot.candles import Candle, resample
+from forexbot.data import CsvProvider, _parse_time, parse_yahoo
 from forexbot.news import NewsMonitor, parse_calendar, parse_rss, score_headline
 from forexbot.risk import RiskConfig, RiskManager, position_units
 from forexbot.strategy import TrendMomentumStrategy
 
 
 def synthetic(n=3000, drift=0.00003, seed=1, start=1.10):
-    rng = np.random.default_rng(seed)
-    # اتجاهات متناوبة لإنتاج إشارات في الاتجاهين
-    regime = np.sign(np.sin(np.arange(n) / 400.0))
-    rets = drift * regime + rng.normal(0, 0.0012, n)
-    close = start * np.exp(np.cumsum(rets))
-    open_ = np.r_[close[0], close[:-1]]
-    hi = np.maximum(open_, close) * (1 + np.abs(rng.normal(0, 0.0005, n)))
-    lo = np.minimum(open_, close) * (1 - np.abs(rng.normal(0, 0.0005, n)))
-    idx = pd.date_range("2025-01-01", periods=n, freq="1h", tz="UTC")
-    return pd.DataFrame({"open": open_, "high": hi, "low": lo, "close": close}, index=idx)
+    rng = random.Random(seed)
+    px, out = start, []
+    for i in range(n):
+        regime = 1 if math.sin(i / 400.0) >= 0 else -1  # اتجاهات متناوبة
+        o = px
+        px *= math.exp(drift * regime + rng.gauss(0, 0.0012))
+        hi = max(o, px) * (1 + abs(rng.gauss(0, 0.0005)))
+        lo = min(o, px) * (1 - abs(rng.gauss(0, 0.0005)))
+        out.append(Candle(1735689600 + i * 3600, o, hi, lo, px))
+    return out
 
 
 def test_indicators_ranges():
-    df = synthetic(500)
-    r = ta.rsi(df["close"])
-    assert r.between(0, 100).all()
-    assert (ta.atr(df) > 0).iloc[1:].all()
-    assert ta.adx(df).between(0, 100).all()
+    c = synthetic(500)
+    close = [x.close for x in c]
+    assert all(0 <= v <= 100 for v in ta.rsi(close))
+    assert all(v > 0 for v in ta.atr(c))
+    assert all(0 <= v <= 100 for v in ta.adx(c))
+    assert ta.ema([5.0] * 50, 10)[-1] == pytest.approx(5.0)
+    lo, mid, hi = ta.bollinger(close)
+    assert lo[30] < mid[30] < hi[30]
 
 
 def test_strategy_signals_are_consistent():
-    df = synthetic()
     s = TrendMomentumStrategy({"min_score": 60})
-    d = s.prepare(df)
+    d = s.prepare(synthetic())
     sigs = [x for i in range(len(d)) if (x := s.signal_at(d, i, "EURUSD"))]
     assert sigs, "يجب أن تظهر إشارات على بيانات ذات اتجاه"
     assert {x.side for x in sigs} == {"BUY", "SELL"}
@@ -51,11 +55,11 @@ def test_strategy_signals_are_consistent():
 
 
 def test_no_lookahead_in_htf():
-    df = synthetic(1200)
-    s = TrendMomentumStrategy()
-    full = s.prepare(df)["htf_slope"]
-    part = s.prepare(df.iloc[:800])["htf_slope"]
-    pd.testing.assert_series_equal(full.iloc[:800], part, check_names=False)
+    c = synthetic(1200)
+    full = ta.htf_slope(c, 14400, 50)
+    part = ta.htf_slope(c[:800], 14400, 50)
+    for a, b in zip(part, full[:800]):
+        assert (math.isnan(a) and math.isnan(b)) or a == pytest.approx(b)
 
 
 def test_backtest_runs():
@@ -63,13 +67,11 @@ def test_backtest_runs():
     st = res.stats()
     assert st["trades"] > 0
     for t in res.trades:
-        assert t.r_multiple == pytest.approx(2.0, abs=1e-6) or t.r_multiple == pytest.approx(-1.0, abs=1e-6)
+        assert t.r_multiple == pytest.approx(2.0) or t.r_multiple == pytest.approx(-1.0)
 
 
 def test_position_sizing():
-    # EURUSD: وقف 20 نقطة، رصيد 10000، مخاطرة 1% = 100$ → 50,000 وحدة
     assert position_units(10000, 1, 1.1000, 1.0980, "EURUSD") == 50000
-    # USDJPY: وقف 0.20 ين @150 → خسارة لكل وحدة 0.2/150 $
     assert position_units(10000, 1, 150.0, 149.8, "USDJPY") == 75000
 
 
@@ -115,5 +117,19 @@ def test_headline_sentiment():
     <pubDate>Fri, 20 Nov 2026 12:00:00 GMT</pubDate></item></channel></rss>"""
     m = NewsMonitor({})
     m.headlines = parse_rss(rss)
-    now = datetime(2026, 11, 20, 13, 0, tzinfo=timezone.utc)
-    assert m.sentiment("JPY", now=now) == 1
+    assert m.sentiment("JPY", now=datetime(2026, 11, 20, 13, 0, tzinfo=timezone.utc)) == 1
+
+
+def test_parsers_and_resample(tmp_path):
+    js = {"chart": {"result": [{"timestamp": [0, 3600, 7200, 10800, 14400],
+          "indicators": {"quote": [{"open": [1, 2, 3, None, 5], "high": [2, 3, 4, 5, 6],
+                                    "low": [.5, 1.5, 2.5, 3.5, 4.5], "close": [2, 3, 4, 5, 6]}]}}]}}
+    c = parse_yahoo(js)
+    assert len(c) == 4
+    r = resample(c, 14400)
+    assert [(x.open, x.high, x.close) for x in r] == [(1, 4, 4), (5, 6, 6)]
+    assert _parse_time("2024-01-01T00:00:00.000000000Z") == 1704067200
+    (tmp_path / "EURUSD_H1.csv").write_text("time,open,high,low,close\n"
+                                            "2024-01-01 01:00:00,1,2,0.5,1.5\n2024-01-01 00:00:00,1,2,0.5,1.2\n")
+    rows = CsvProvider(str(tmp_path)).candles("EURUSD", "H1")
+    assert [x.close for x in rows] == [1.2, 1.5]

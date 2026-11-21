@@ -1,88 +1,83 @@
-"""مصادر بيانات الأسعار: Yahoo Finance (مجاني)، OANDA (حساب تجريبي/حقيقي)، أو ملف CSV."""
+"""مصادر الأسعار: Yahoo Finance (مجاني)، OANDA، أو ملف CSV — بدون pandas."""
 from __future__ import annotations
 
+import csv
 import logging
 import os
+from datetime import datetime, timezone
 
-import pandas as pd
-import requests
-
-from . import symbols
+from . import net, symbols
+from .candles import Candle, resample
 
 log = logging.getLogger(__name__)
 
-# إطار زمني موحّد → صيغ المزودين
 _YAHOO_INTERVAL = {"M15": "15m", "M30": "30m", "H1": "60m", "H4": "60m", "D1": "1d"}
 _YAHOO_RANGE = {"M15": "60d", "M30": "60d", "H1": "730d", "H4": "730d", "D1": "10y"}
-_RESAMPLE = {"M15": "15min", "M30": "30min", "H1": "1h", "H4": "4h", "D1": "1D"}
-
-OHLC = ["open", "high", "low", "close"]
 
 
-def resample(df: pd.DataFrame, rule: str) -> pd.DataFrame:
-    return df.resample(rule).agg(
-        {"open": "first", "high": "max", "low": "min", "close": "last"}
-    ).dropna()
+def _parse_time(s: str) -> int:
+    s = s.strip()
+    if s.replace(".", "", 1).isdigit():
+        return int(float(s))
+    s = s.replace("Z", "+00:00")
+    if "." in s:  # OANDA يرسل 9 خانات بعد الفاصلة
+        head, rest = s.split(".", 1)
+        frac = "".join(ch for ch in rest if ch.isdigit())
+        tz = rest[len(frac):]
+        s = f"{head}.{frac[:6]}{tz}"
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp())
+
+
+def parse_yahoo(js: dict) -> list[Candle]:
+    res = js["chart"]["result"][0]
+    q = res["indicators"]["quote"][0]
+    out = []
+    for i, t in enumerate(res.get("timestamp") or []):
+        o, h, l, c = q["open"][i], q["high"][i], q["low"][i], q["close"][i]
+        if None in (o, h, l, c):
+            continue
+        out.append(Candle(int(t), float(o), float(h), float(l), float(c)))
+    return out
 
 
 class PriceProvider:
-    def candles(self, symbol: str, timeframe: str = "H1", count: int = 500) -> pd.DataFrame:
+    def candles(self, symbol: str, timeframe: str = "H1", count: int = 500) -> list[Candle]:
         raise NotImplementedError
 
     def last_price(self, symbol: str) -> float:
-        return float(self.candles(symbol, "M15", 5)["close"].iloc[-1])
+        return self.candles(symbol, "M15", 5)[-1].close
 
 
 class YahooProvider(PriceProvider):
     URL = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}"
 
-    def __init__(self, timeout: int = 20):
-        self.session = requests.Session()
-        self.session.headers["User-Agent"] = "Mozilla/5.0 (forexbot)"
-        self.timeout = timeout
-
-    def candles(self, symbol: str, timeframe: str = "H1", count: int = 500) -> pd.DataFrame:
-        params = {"interval": _YAHOO_INTERVAL[timeframe], "range": _YAHOO_RANGE[timeframe]}
-        r = self.session.get(self.URL.format(sym=symbols.to_yahoo(symbol)), params=params,
-                             timeout=self.timeout)
-        r.raise_for_status()
-        res = r.json()["chart"]["result"][0]
-        q = res["indicators"]["quote"][0]
-        df = pd.DataFrame(
-            {k: q[k] for k in OHLC},
-            index=pd.to_datetime(res["timestamp"], unit="s", utc=True),
-        ).dropna()
+    def candles(self, symbol: str, timeframe: str = "H1", count: int = 500) -> list[Candle]:
+        js = net.get_json(self.URL.format(sym=symbols.to_yahoo(symbol)),
+                          params={"interval": _YAHOO_INTERVAL[timeframe], "range": _YAHOO_RANGE[timeframe]})
+        c = parse_yahoo(js)
         if timeframe == "H4":
-            df = resample(df, "4h")
-        return df.tail(count)
+            c = resample(c, 4 * 3600)
+        return c[-count:]
 
 
 class OandaProvider(PriceProvider):
-    def __init__(self, token: str | None = None, practice: bool = True, timeout: int = 20):
+    def __init__(self, token: str | None = None, practice: bool = True):
         self.token = token or os.environ.get("OANDA_TOKEN", "")
         if not self.token:
             raise ValueError("OANDA_TOKEN غير مضبوط")
         host = "api-fxpractice.oanda.com" if practice else "api-fxtrade.oanda.com"
         self.base = f"https://{host}/v3"
-        self.session = requests.Session()
-        self.session.headers["Authorization"] = f"Bearer {self.token}"
-        self.timeout = timeout
 
-    def candles(self, symbol: str, timeframe: str = "H1", count: int = 500) -> pd.DataFrame:
+    def candles(self, symbol: str, timeframe: str = "H1", count: int = 500) -> list[Candle]:
         gran = {"M15": "M15", "M30": "M30", "H1": "H1", "H4": "H4", "D1": "D"}[timeframe]
-        r = self.session.get(
-            f"{self.base}/instruments/{symbols.to_oanda(symbol)}/candles",
-            params={"granularity": gran, "count": min(count, 5000), "price": "M"},
-            timeout=self.timeout,
-        )
-        r.raise_for_status()
-        rows = [
-            {"time": c["time"], **{k: float(c["mid"][k[0]]) for k in OHLC}}
-            for c in r.json()["candles"] if c.get("complete", True)
-        ]
-        df = pd.DataFrame(rows)
-        df.index = pd.to_datetime(df.pop("time"), utc=True)
-        return df
+        js = net.get_json(f"{self.base}/instruments/{symbols.to_oanda(symbol)}/candles",
+                          params={"granularity": gran, "count": min(count, 5000), "price": "M"},
+                          headers={"Authorization": f"Bearer {self.token}"})
+        return [Candle(_parse_time(c["time"]), *(float(c["mid"][k]) for k in "ohlc"))
+                for c in js["candles"] if c.get("complete", True)]
 
 
 class CsvProvider(PriceProvider):
@@ -91,13 +86,18 @@ class CsvProvider(PriceProvider):
     def __init__(self, folder: str):
         self.folder = folder
 
-    def candles(self, symbol: str, timeframe: str = "H1", count: int = 100000) -> pd.DataFrame:
+    def candles(self, symbol: str, timeframe: str = "H1", count: int = 10**9) -> list[Candle]:
         path = os.path.join(self.folder, f"{symbols.normalize(symbol)}_{timeframe}.csv")
-        df = pd.read_csv(path)
-        df.columns = [c.lower() for c in df.columns]
-        tcol = next(c for c in ("time", "date", "datetime", "timestamp") if c in df.columns)
-        df.index = pd.to_datetime(df.pop(tcol), utc=True)
-        return df[OHLC].astype(float).sort_index().tail(count)
+        with open(path, newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        out = []
+        for r in rows:
+            r = {k.lower().strip(): v for k, v in r.items()}
+            tkey = next(k for k in ("time", "date", "datetime", "timestamp") if k in r)
+            out.append(Candle(_parse_time(r[tkey]), float(r["open"]), float(r["high"]),
+                              float(r["low"]), float(r["close"])))
+        out.sort(key=lambda c: c.time)
+        return out[-count:]
 
 
 def make_provider(cfg: dict) -> PriceProvider:

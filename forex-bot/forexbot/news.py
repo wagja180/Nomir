@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-import requests
+from . import net
 
 log = logging.getLogger(__name__)
 
@@ -69,9 +69,7 @@ def parse_calendar(items: list[dict]) -> list[EconomicEvent]:
 
 
 def fetch_calendar(url: str = CALENDAR_URL, timeout: int = 20) -> list[EconomicEvent]:
-    r = requests.get(url, timeout=timeout, headers={"User-Agent": "forexbot"})
-    r.raise_for_status()
-    return parse_calendar(r.json())
+    return parse_calendar(net.get_json(url, timeout=timeout))
 
 
 # ---------------- تحليل العناوين ----------------
@@ -138,9 +136,7 @@ def fetch_headlines(feeds: list[str], timeout: int = 20) -> list[Headline]:
     out: list[Headline] = []
     for url in feeds:
         try:
-            r = requests.get(url, timeout=timeout, headers={"User-Agent": "forexbot"})
-            r.raise_for_status()
-            out.extend(parse_rss(r.text))
+            out.extend(parse_rss(net.get_text(url, timeout=timeout)))
         except Exception as e:  # مصدر واحد معطل لا يوقف البوت
             log.warning("تعذّر جلب %s: %s", url, e)
     return out

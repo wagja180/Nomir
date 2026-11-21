@@ -25,7 +25,9 @@ def pip_size(symbol: str) -> float:
 
 
 def to_yahoo(symbol: str) -> str:
-    return normalize(symbol) + "=X"
+    s = normalize(symbol)
+    # Yahoo لا يوفر XAUUSD=X بشكل موثوق، نستخدم العقود الآجلة للذهب والفضة
+    return {"XAUUSD": "GC=F", "XAGUSD": "SI=F"}.get(s, s + "=X")
 
 
 def to_oanda(symbol: str) -> str:

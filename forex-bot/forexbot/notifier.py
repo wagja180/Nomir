@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import os
 
-import requests
+from . import net
 
 log = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ class Notifier:
         print(text, flush=True)
         if self.telegram:
             try:
-                requests.post(f"https://api.telegram.org/bot{self.token}/sendMessage",
-                              data={"chat_id": self.chat, "text": text}, timeout=15)
+                net.post_form(f"https://api.telegram.org/bot{self.token}/sendMessage",
+                              {"chat_id": self.chat, "text": text})
             except Exception as e:
                 log.warning("فشل إرسال تيليجرام: %s", e)

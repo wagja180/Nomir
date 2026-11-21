@@ -15,6 +15,7 @@ import sys
 import yaml
 
 from .backtest import run_backtest
+from .candles import fmt_time
 from .bot import ForexBot, format_signal
 from .data import make_provider
 from .strategy import TrendMomentumStrategy
@@ -52,9 +53,13 @@ def main(argv: list[str] | None = None) -> None:
         risk = cfg.get("risk", {}).get("risk_per_trade_pct", 1.0)
         spread = cfg.get("paper", {}).get("spread_pips", 1.0)
         for sym in ([a.symbol] if a.symbol else cfg["symbols"]):
-            df = provider.candles(sym, tf, 100000)
-            res = run_backtest(df, sym, strat, risk_pct=risk, spread_pips=spread)
-            print(f"\n=== {sym} {tf}  ({df.index[0]:%Y-%m-%d} → {df.index[-1]:%Y-%m-%d}) ===")
+            candles = provider.candles(sym, tf, 100000)
+            if not candles:
+                print(f"\n=== {sym}: لا توجد بيانات ===")
+                continue
+            res = run_backtest(candles, sym, strat, risk_pct=risk, spread_pips=spread)
+            print(f"\n=== {sym} {tf}  ({fmt_time(candles[0].time, '%Y-%m-%d')} → "
+                  f"{fmt_time(candles[-1].time, '%Y-%m-%d')}) ===")
             for k, v in res.stats().items():
                 print(f"  {k}: {v}")
         return

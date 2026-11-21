@@ -16,10 +16,30 @@
 
 ## التثبيت
 
+البوت لا يحتاج pandas ولا numpy — يعمل بمكتبة Python القياسية + مكتبة PyYAML الخفيفة فقط،
+لذلك يعمل على الكمبيوتر وعلى هاتف أندرويد عبر **Termux** حتى في الهواتف القديمة.
+
 ```bash
 cd forex-bot
 pip install -r requirements.txt
 ```
+
+### على هاتف أندرويد (Termux)
+
+1. ثبّت Termux من https://github.com/termux/termux-app/releases (ملف `universal.apk`)
+2. نفّذ:
+
+```bash
+pkg update -y && pkg upgrade -y
+pkg install -y python git
+pip install pyyaml
+git clone -b ccr-63f5f8e9-r63nou https://github.com/wagja180/Nomir.git
+cd Nomir/forex-bot
+python -m forexbot news
+```
+
+3. للتشغيل المستمر: `termux-wake-lock` ثم `python -m forexbot run`،
+   واجعل بطارية Termux "بدون قيود" من إعدادات الهاتف.
 
 ## الأوامر
 
@@ -84,6 +104,8 @@ export OANDA_ACCOUNT_ID=...
 
 ```
 forexbot/
+  net.py         طلبات الإنترنت (مكتبة قياسية)
+  candles.py     الشموع وتحويل الإطار الزمني
   data.py        مصادر الأسعار (Yahoo / OANDA / CSV)
   indicators.py  EMA, RSI, MACD, ATR, ADX, Bollinger
   strategy.py    توليد الإشارات ونظام النقاط

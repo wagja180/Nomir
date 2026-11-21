@@ -7,9 +7,7 @@ import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 
-import requests
-
-from . import symbols
+from . import net, symbols
 
 log = logging.getLogger(__name__)
 
@@ -115,21 +113,15 @@ class OandaBroker:
         self.account = os.environ["OANDA_ACCOUNT_ID"]
         host = "api-fxpractice.oanda.com" if practice else "api-fxtrade.oanda.com"
         self.base = f"https://{host}/v3/accounts/{self.account}"
-        self.s = requests.Session()
-        self.s.headers.update({"Authorization": f"Bearer {self.token}",
-                               "Content-Type": "application/json"})
+        self.headers = {"Authorization": f"Bearer {self.token}"}
 
     @property
     def balance(self) -> float:
-        r = self.s.get(f"{self.base}/summary", timeout=20)
-        r.raise_for_status()
-        return float(r.json()["account"]["balance"])
+        return float(net.get_json(f"{self.base}/summary", headers=self.headers)["account"]["balance"])
 
     def open_positions(self) -> list[Position]:
-        r = self.s.get(f"{self.base}/openTrades", timeout=20)
-        r.raise_for_status()
         out = []
-        for t in r.json()["trades"]:
+        for t in net.get_json(f"{self.base}/openTrades", headers=self.headers)["trades"]:
             u = int(float(t["currentUnits"]))
             out.append(Position(id=t["id"], symbol=symbols.normalize(t["instrument"]),
                                 side="BUY" if u > 0 else "SELL", units=abs(u),
@@ -148,9 +140,7 @@ class OandaBroker:
             "stopLossOnFill": {"price": f"{sl:.{digits}f}"},
             "takeProfitOnFill": {"price": f"{tp:.{digits}f}"},
         }}
-        r = self.s.post(f"{self.base}/orders", json=body, timeout=20)
-        r.raise_for_status()
-        return r.json()
+        return net.post_json(f"{self.base}/orders", body, headers=self.headers)
 
     def update(self, *a, **k) -> list:
         return []  # OANDA تغلق الصفقات تلقائياً عند الوقف/الهدف

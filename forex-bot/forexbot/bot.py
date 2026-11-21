@@ -6,6 +6,7 @@ import time
 from datetime import datetime, timezone
 
 from . import symbols
+from .candles import fmt_time
 from .broker import OandaBroker, PaperBroker
 from .data import make_provider
 from .news import NewsMonitor
@@ -25,6 +26,7 @@ def format_signal(sig: Signal, units: int | None = None) -> str:
         f"وقف الخسارة: {sig.stop_loss:.5f} ({abs(sig.entry - sig.stop_loss) / pip:.0f} نقطة)",
         f"جني الربح: {sig.take_profit:.5f} ({abs(sig.take_profit - sig.entry) / pip:.0f} نقطة)",
         f"العائد/المخاطرة: 1:{sig.risk_reward:.1f}",
+        f"وقت الشمعة: {fmt_time(sig.time)} UTC",
     ]
     if units:
         lines.append(f"الحجم: {units:,} وحدة ({units / 100000:.2f} لوت)")
@@ -103,7 +105,7 @@ class ForexBot:
         found = []
         for sym in self.cfg["symbols"]:
             try:
-                df = self.provider.candles(sym, self.timeframe, 600)
+                candles = self.provider.candles(sym, self.timeframe, 600)
             except Exception as e:
                 log.warning("تعذّر جلب أسعار %s: %s", sym, e)
                 continue
@@ -112,7 +114,7 @@ class ForexBot:
             if ev:
                 log.info("%s: تجاهل — خبر قوي قريب: %s %s", sym, ev.currency, ev.title)
                 continue
-            sig = self.strategy.latest(df, symbols.normalize(sym), self.news.pair_bias(base, quote))
+            sig = self.strategy.latest(candles, symbols.normalize(sym), self.news.pair_bias(base, quote))
             if sig:
                 found.append(sig)
         return sorted(found, key=lambda s: -s.score)
@@ -125,9 +127,11 @@ class ForexBot:
                     last = self.provider.candles(sym, "M15", 4)
                 except Exception:
                     continue
-                closed = self.broker.update(sym, float(last["high"].max()), float(last["low"].min()),
-                                            float(last["close"].iloc[-1]),
-                                            self._quote_to_account(sym, float(last["close"].iloc[-1])))
+                if not last:
+                    continue
+                px = last[-1].close
+                closed = self.broker.update(sym, max(c.high for c in last), min(c.low for c in last),
+                                            px, self._quote_to_account(sym, px))
                 for p in closed:
                     self.notifier.send(f"✅ إغلاق {p.symbol} {p.side} ({p.reason}) الربح/الخسارة: {p.pnl:+.2f}")
 
