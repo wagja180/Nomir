@@ -191,8 +191,16 @@ def cmd_watch(args):
                             result = close_position(exchange, symbol, position, live=close_live)
                             print(f"[{ts}] {tag} إغلاق الصفقة ({position.side}) عند {reason}. {result}")
                             notify(f"إغلاق صفقة {position.side} — {symbol}", f"{reason} عند {price:.6f}")
-                            clear_open_position(state_path)
-                            open_count -= 1
+                            # لا تُمسح حالة الصفقة إلا إذا أُغلقت فعلاً (محاكاة،
+                            # أو أمر بيع حقيقي نُفّذ، أو تأكدنا أنها مُغلقة مسبقاً).
+                            # إن كانت لا تزال مفتوحة فعلياً (already_closed=False
+                            # وبلا order)، تبقى مُتتبَّعة لإعادة المحاولة في الدورة
+                            # القادمة، تفادياً لصفقة تُفتح دون أن يتابعها البوت.
+                            if result.dry_run or result.order is not None or result.already_closed:
+                                clear_open_position(state_path)
+                                open_count -= 1
+                            else:
+                                print(f"[{ts}] {tag} الصفقة لا تزال مفتوحة فعلياً، سيُعاد المحاولة في الدورة القادمة.")
                         else:
                             print(f"[{ts}] {tag} صفقة مفتوحة ({position.side}) منذ {position.opened_at}، السعر الحالي={price:.6f}، ننتظر الوقف/الهدف.")
                     elif open_count >= config.max_open_positions:
@@ -229,6 +237,15 @@ def cmd_watch(args):
                                     f"سعر الدخول {signal.price:.6f} | وقف {signal.stop_loss:.6f} | هدف {signal.take_profit:.6f}",
                                 )
                                 if sizing.quantity > 0:
+                                    # عند التنفيذ الحقيقي، سجّل الكمية الفعلية التي
+                                    # امتلكناها بعد التنفيذ (بعد خصم الرسوم وتقريب
+                                    # المنصة)، لا الكمية المطلوبة أصلاً، تفادياً
+                                    # لخطأ "رصيد غير كافٍ" لاحقاً عند إغلاق الصفقة.
+                                    actual_quantity = (
+                                        result.filled_quantity
+                                        if live and result.filled_quantity
+                                        else sizing.quantity
+                                    )
                                     save_open_position(
                                         state_path,
                                         OpenPosition(
@@ -237,7 +254,7 @@ def cmd_watch(args):
                                             entry_price=signal.price,
                                             stop_loss=signal.stop_loss,
                                             take_profit=signal.take_profit,
-                                            quantity=sizing.quantity,
+                                            quantity=actual_quantity,
                                             opened_at=ts,
                                             live=live,
                                         ),

@@ -21,7 +21,14 @@ logger = logging.getLogger("bot.executor")
 
 
 class ExecutionResult:
-    def __init__(self, dry_run: bool, order: dict | None, message: str, already_closed: bool = False):
+    def __init__(
+        self,
+        dry_run: bool,
+        order: dict | None,
+        message: str,
+        already_closed: bool = False,
+        filled_quantity: float | None = None,
+    ):
         self.dry_run = dry_run
         self.order = order
         self.message = message
@@ -29,6 +36,11 @@ class ExecutionResult:
         # المنصة (مثلاً نفّذ أمر OCO الوقف/الهدف قبل أن تصل حلقة المراقبة
         # لنفس القرار)، فلا يوجد رصيد كافٍ لإغلاقها يدوياً مجدداً.
         self.already_closed = already_closed
+        # الكمية الفعلية المملوكة بعد التنفيذ (بعد خصم رسوم التداول المدفوعة
+        # بعملة الأساس، وبعد تقريب المنصة للكمية المطلوبة). قد تقل قليلاً عن
+        # sizing.quantity الأصلية؛ يجب استخدامها لا الكمية المطلوبة عند حفظ
+        # حالة الصفقة، تفادياً لخطأ "رصيد غير كافٍ" لاحقاً عند الإغلاق.
+        self.filled_quantity = filled_quantity
 
     def __repr__(self) -> str:
         mode = "تجربة (dry-run)" if self.dry_run else "حقيقي (live)"
@@ -66,10 +78,36 @@ def execute_signal(
     order = exchange.create_order(symbol, type="market", side=side, amount=sizing.quantity)
     logger.warning("تم تنفيذ أمر حقيقي: %s", order)
 
-    opposite_side = "sell" if side == "buy" else "buy"
-    _place_protective_oco(exchange, symbol, opposite_side, sizing.quantity, signal.stop_loss, signal.take_profit)
+    filled_quantity = _actual_filled_base_quantity(order, symbol, side, fallback=sizing.quantity)
 
-    return ExecutionResult(dry_run=False, order=order, message=f"تم تنفيذ أمر {side} حقيقي بكمية {sizing.quantity:.6f}")
+    opposite_side = "sell" if side == "buy" else "buy"
+    _place_protective_oco(exchange, symbol, opposite_side, filled_quantity, signal.stop_loss, signal.take_profit)
+
+    return ExecutionResult(
+        dry_run=False,
+        order=order,
+        message=f"تم تنفيذ أمر {side} حقيقي بكمية {filled_quantity:.6f}",
+        filled_quantity=filled_quantity,
+    )
+
+
+def _actual_filled_base_quantity(order: dict, symbol: str, side: str, fallback: float) -> float:
+    """يحسب الكمية الفعلية المملوكة من عملة الأساس بعد التنفيذ، بخصم أي رسوم
+    مدفوعة بنفس العملة. المنصة تُقرّب الكمية المطلوبة لأقرب دقة مسموحة، وقد
+    تُخصم الرسوم من نفس عملة الأساس عند الشراء — فالكمية المطلوبة أصلاً
+    (sizing.quantity) قد تكون أكبر قليلاً من المملوك فعلياً، ما يسبب لاحقاً
+    خطأ "رصيد غير كافٍ" عند محاولة إغلاق الصفقة بنفس الكمية المسجّلة."""
+    if side != "buy":
+        return fallback
+    try:
+        base_asset = symbol.split("/")[0]
+        filled = float(order.get("filled") or order.get("amount") or fallback)
+        fees = order.get("fees") or ([order["fee"]] if order.get("fee") else [])
+        base_fee = sum(float(fee.get("cost") or 0.0) for fee in fees if fee and fee.get("currency") == base_asset)
+        net = filled - base_fee
+        return net if net > 0 else fallback
+    except Exception:
+        return fallback
 
 
 def _place_protective_oco(
@@ -155,9 +193,54 @@ def close_position(
             logger.error(msg)
             return ExecutionResult(dry_run=False, order=None, message=msg, already_closed=False)
 
-        msg = f"الصفقة مُغلقة على المنصة على الأرجح (نفّذ أمر OCO قبل وصولنا لنفس القرار): {exc}"
-        logger.warning(msg)
-        return ExecutionResult(dry_run=False, order=None, message=msg, already_closed=True)
+        # لا توجد أوامر معلّقة الآن، لكن هذا وحده لا يكفي لاستنتاج أن الصفقة
+        # أُغلقت فعلاً عبر OCO — فقد لا يكون OCO مدعوماً أصلاً لهذا الزوج (يحدث
+        # فعلياً مع بعض أزواج Binance)، وعندها "لا توجد أوامر معلّقة" صحيحة منذ
+        # البداية دون أي علاقة بإغلاق حقيقي. تحقّق من الرصيد الفعلي المتبقي من
+        # عملة الأساس قبل اتخاذ أي قرار.
+        base_asset = symbol.split("/")[0]
+        try:
+            balance = exchange.fetch_balance()
+            available = float((balance.get(base_asset) or {}).get("free") or 0.0)
+        except Exception as balance_exc:
+            msg = (
+                f"تعذر إغلاق الصفقة وتعذر أيضاً التحقق من الرصيد المتبقي من {base_asset} "
+                f"للتأكد إن كانت مُغلقة فعلاً. الصفقة تبقى مُتتبَّعة احتياطاً: {balance_exc}"
+            )
+            logger.error(msg)
+            return ExecutionResult(dry_run=False, order=None, message=msg, already_closed=False)
+
+        if available <= 0:
+            msg = f"الصفقة مُغلقة على المنصة على الأرجح (لا يوجد رصيد متبقٍ من {base_asset}): {exc}"
+            logger.warning(msg)
+            return ExecutionResult(dry_run=False, order=None, message=msg, already_closed=True)
+
+        # لا يزال هناك رصيد فعلي (أقل عادة من الكمية المسجّلة بسبب رسوم أو
+        # تقريب عند فتح الصفقة) — أغلق الصفقة فعلياً بالكمية الفعلية المتاحة
+        # بدل التخلي عن تتبّعها دون سبب حقيقي.
+        try:
+            retry_order = exchange.create_order(symbol, type="market", side=opposite_side, amount=available)
+        except Exception as retry_exc:
+            msg = (
+                f"لا يزال هناك رصيد فعلي {available:.8f} {base_asset} لكن تعذر بيعه أيضاً "
+                f"(قد تكون كمية غبار صغيرة جداً دون الحد الأدنى المسموح). سنعتبرها مُغلقة "
+                f"فعلياً من الناحية العملية: {retry_exc}"
+            )
+            logger.warning(msg)
+            return ExecutionResult(dry_run=False, order=None, message=msg, already_closed=True)
+
+        logger.warning(
+            "تم إغلاق الصفقة الحقيقية بالكمية الفعلية المتاحة (%.8f بدل %.8f المسجّلة بسبب فرق رسوم/تقريب): %s",
+            available, position.quantity, retry_order,
+        )
+        return ExecutionResult(
+            dry_run=False,
+            order=retry_order,
+            message=(
+                f"تم إغلاق الصفقة بأمر {opposite_side} حقيقي بكمية فعلية {available:.8f} "
+                f"{base_asset} (بدل {position.quantity:.8f} المسجّلة)"
+            ),
+        )
 
     logger.warning("تم إغلاق الصفقة الحقيقية: %s", order)
     return ExecutionResult(dry_run=False, order=order, message=f"تم إغلاق الصفقة بأمر {opposite_side} حقيقي بكمية {position.quantity:.6f}")
