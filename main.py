@@ -7,6 +7,7 @@
   python main.py trade --symbol BTC/USDT --timeframe 1h --live --confirm   # تنفيذ حقيقي
   python main.py watch --symbol BTC/USDT --timeframe 1h --interval-minutes 15             # مراقبة مستمرة، تجربة
   python main.py watch --symbol BTC/USDT --timeframe 1h --interval-minutes 15 --live --confirm  # مراقبة + تنفيذ حقيقي تلقائي
+  python main.py watch --symbol "BTC/USDT,ETH/USDT,BNB/USDT,SOL/USDT,XRP/USDT" --timeframe 1h --live --confirm  # عدة عملات معاً
 """
 
 import argparse
@@ -108,12 +109,21 @@ def _now() -> str:
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def cmd_watch(args):
-    """مراقبة مستمرة: يفحص السوق كل args.interval_minutes دقيقة، يفتح صفقة عند
-    ظهور إشارة (إن لم تكن هناك صفقة مفتوحة بالفعل)، ويراقب وقف الخسارة/الهدف
-    لإغلاقها. يحفظ حالة الصفقة المفتوحة في ملف JSON حتى لا يفتح صفقات مكررة
-    بين دورة وأخرى."""
+def _state_path_for(symbol: str, override: str | None) -> str:
+    if override:
+        return override
+    return f"state_{symbol.replace('/', '_')}.json"
 
+
+def cmd_watch(args):
+    """مراقبة مستمرة لرمز واحد أو عدة رموز معاً (مفصولة بفاصلة في --symbol).
+    يفحص كل رمز كل args.interval_minutes دقيقة، يفتح صفقة عند ظهور إشارة (إن
+    لم تكن هناك صفقة مفتوحة له ولم يُبلَغ الحد الأقصى الإجمالي للصفقات
+    المفتوحة MAX_OPEN_POSITIONS)، ويراقب وقف الخسارة/الهدف لإغلاقها. يحفظ حالة
+    كل صفقة في ملف JSON منفصل لكل رمز حتى لا تُفتح صفقات مكررة بين دورة وأخرى،
+    ولا يتوزع رأس المال المشترك (عملة تسعير واحدة عادة) على أكثر مما يتحمّل."""
+
+    symbols = [s.strip() for s in args.symbol.split(",") if s.strip()]
     exchange = build_exchange()
     live = args.live and args.confirm
     if args.live and not args.confirm:
@@ -122,10 +132,13 @@ def cmd_watch(args):
             "سيتم التشغيل في وضع التجربة (dry-run) فقط."
         )
 
-    state_path = args.state_file or f"state_{args.symbol.replace('/', '_')}.json"
+    state_file_override = args.state_file
+    if state_file_override and len(symbols) > 1:
+        logger.error("خيار --state-file غير مدعوم مع أكثر من رمز في نفس الوقت؛ سيُستخدم ملف تلقائي منفصل لكل رمز.")
+        state_file_override = None
 
-    print(f"بدء المراقبة المستمرة لـ {args.symbol} ({args.timeframe}) كل {args.interval_minutes} دقيقة.")
-    print(f"ملف تتبع الحالة: {state_path}")
+    print(f"بدء المراقبة المستمرة لـ {', '.join(symbols)} ({args.timeframe}) كل {args.interval_minutes} دقيقة.")
+    print(f"الحد الأقصى للصفقات المفتوحة في آن واحد عبر كل الرموز: {config.max_open_positions}")
     if live:
         print("⚠️  وضع التنفيذ الحقيقي مفعّل: سيتم فتح وإغلاق صفقات حقيقية بأموال حقيقية تلقائياً بدون تدخلك.")
     else:
@@ -136,92 +149,104 @@ def cmd_watch(args):
     try:
         while True:
             iterations += 1
-            ts = _now()
-            try:
-                df = fetch_ohlcv(exchange, args.symbol, timeframe=args.timeframe, limit=args.candles)
-                df = add_indicators(df)
-                last = df.iloc[-1]
-                price = float(last["close"])
 
-                position = load_open_position(state_path)
+            open_count = sum(
+                1 for s in symbols if load_open_position(_state_path_for(s, state_file_override)) is not None
+            )
 
-                # صفقة محاكاة (dry-run) محفوظة سابقاً يجب ألا تُغلَق أبداً بأمر
-                # حقيقي إن شُغّل البوت لاحقاً بوضع live (والعكس: صفقة حقيقية لا
-                # يجوز التعامل معها إلا بأوامر حقيقية). عدم التطابق يعني أن ملف
-                # الحالة من جلسة بوضع مختلف؛ نتعامل معها دائماً كمحاكاة فقط.
-                position_is_real = bool(position and position.live)
-                close_live = live and position_is_real
+            for symbol in symbols:
+                ts = _now()
+                state_path = _state_path_for(symbol, state_file_override)
+                tag = f"[{symbol}]" if len(symbols) > 1 else ""
+                try:
+                    df = fetch_ohlcv(exchange, symbol, timeframe=args.timeframe, limit=args.candles)
+                    df = add_indicators(df)
+                    last = df.iloc[-1]
+                    price = float(last["close"])
 
-                if position:
-                    if live != position_is_real:
-                        print(
-                            f"[{ts}] تحذير: صفقة محفوظة بوضع "
-                            f"{'حقيقي' if position_is_real else 'تجربة'} أثناء تشغيل البوت الآن بوضع "
-                            f"{'حقيقي' if live else 'تجربة'} — ستُعامَل كمحاكاة فقط لتفادي أمر حقيقي خاطئ."
-                        )
-                    hit_stop = (position.side == "buy" and float(last["low"]) <= position.stop_loss) or (
-                        position.side == "sell" and float(last["high"]) >= position.stop_loss
-                    )
-                    hit_target = (position.side == "buy" and float(last["high"]) >= position.take_profit) or (
-                        position.side == "sell" and float(last["low"]) <= position.take_profit
-                    )
-                    if hit_stop or hit_target:
-                        reason = "وقف الخسارة" if hit_stop else "الهدف"
-                        result = close_position(exchange, args.symbol, position, live=close_live)
-                        print(f"[{ts}] إغلاق الصفقة ({position.side}) عند {reason}. {result}")
-                        notify(f"إغلاق صفقة {position.side} — {args.symbol}", f"{reason} عند {price:.6f}")
-                        clear_open_position(state_path)
-                    else:
-                        print(f"[{ts}] صفقة مفتوحة ({position.side}) منذ {position.opened_at}، السعر الحالي={price:.6f}، ننتظر الوقف/الهدف.")
-                else:
-                    zones = detect_zones(df)
-                    signal = generate_signal(df, zones)
-                    if signal:
-                        if live:
-                            balance_quote = fetch_quote_balance(exchange, args.symbol)
-                        else:
-                            balance_quote = args.balance or 1000.0
-                        sizing = compute_position_size(balance_quote, signal)
+                    position = load_open_position(state_path)
 
-                        # التداول الفوري (Spot) لا يسمح بالبيع على المكشوف: تجاهل
-                        # إشارات البيع بأمان إن لم نملك كمية كافية من عملة الأساس،
-                        # بدل تكرار محاولة فاشلة كل دورة بخطأ "رصيد غير كافٍ".
-                        skip_sell = False
-                        if live and signal.side == "sell":
-                            base_balance = fetch_base_balance(exchange, args.symbol)
-                            if base_balance < sizing.quantity:
-                                base = args.symbol.split("/")[0]
-                                print(
-                                    f"[{ts}] إشارة بيع لكن لا يوجد رصيد كافٍ من {base} "
-                                    f"({base_balance:.8f} متاح، {sizing.quantity:.8f} مطلوب). تم تجاهلها."
-                                )
-                                skip_sell = True
+                    # صفقة محاكاة (dry-run) محفوظة سابقاً يجب ألا تُغلَق أبداً بأمر
+                    # حقيقي إن شُغّل البوت لاحقاً بوضع live (والعكس: صفقة حقيقية لا
+                    # يجوز التعامل معها إلا بأوامر حقيقية). عدم التطابق يعني أن ملف
+                    # الحالة من جلسة بوضع مختلف؛ نتعامل معها دائماً كمحاكاة فقط.
+                    position_is_real = bool(position and position.live)
+                    close_live = live and position_is_real
 
-                        if not skip_sell:
-                            result = execute_signal(exchange, args.symbol, signal, sizing, live=live)
-                            print(f"[{ts}] إشارة {signal.side} جديدة! {result}")
-                            notify(
-                                f"إشارة {signal.side} جديدة — {args.symbol}",
-                                f"سعر الدخول {signal.price:.6f} | وقف {signal.stop_loss:.6f} | هدف {signal.take_profit:.6f}",
+                    if position:
+                        if live != position_is_real:
+                            print(
+                                f"[{ts}] {tag} تحذير: صفقة محفوظة بوضع "
+                                f"{'حقيقي' if position_is_real else 'تجربة'} أثناء تشغيل البوت الآن بوضع "
+                                f"{'حقيقي' if live else 'تجربة'} — ستُعامَل كمحاكاة فقط لتفادي أمر حقيقي خاطئ."
                             )
-                            if sizing.quantity > 0:
-                                save_open_position(
-                                    state_path,
-                                    OpenPosition(
-                                        symbol=args.symbol,
-                                        side=signal.side,
-                                        entry_price=signal.price,
-                                        stop_loss=signal.stop_loss,
-                                        take_profit=signal.take_profit,
-                                        quantity=sizing.quantity,
-                                        opened_at=ts,
-                                        live=live,
-                                    ),
-                                )
+                        hit_stop = (position.side == "buy" and float(last["low"]) <= position.stop_loss) or (
+                            position.side == "sell" and float(last["high"]) >= position.stop_loss
+                        )
+                        hit_target = (position.side == "buy" and float(last["high"]) >= position.take_profit) or (
+                            position.side == "sell" and float(last["low"]) <= position.take_profit
+                        )
+                        if hit_stop or hit_target:
+                            reason = "وقف الخسارة" if hit_stop else "الهدف"
+                            result = close_position(exchange, symbol, position, live=close_live)
+                            print(f"[{ts}] {tag} إغلاق الصفقة ({position.side}) عند {reason}. {result}")
+                            notify(f"إغلاق صفقة {position.side} — {symbol}", f"{reason} عند {price:.6f}")
+                            clear_open_position(state_path)
+                            open_count -= 1
+                        else:
+                            print(f"[{ts}] {tag} صفقة مفتوحة ({position.side}) منذ {position.opened_at}، السعر الحالي={price:.6f}، ننتظر الوقف/الهدف.")
+                    elif open_count >= config.max_open_positions:
+                        print(f"[{ts}] {tag} تم بلوغ الحد الأقصى للصفقات المفتوحة ({config.max_open_positions})، تم تجاهل البحث عن إشارة جديدة.")
                     else:
-                        print(f"[{ts}] لا توجد إشارة الآن. السعر={price:.6f}")
-            except Exception as exc:  # لا نوقف المراقبة المستمرة بسبب خطأ عابر (شبكة، إلخ)
-                logger.error("[%s] خطأ في دورة المراقبة: %s", ts, exc)
+                        zones = detect_zones(df)
+                        signal = generate_signal(df, zones)
+                        if signal:
+                            if live:
+                                balance_quote = fetch_quote_balance(exchange, symbol)
+                            else:
+                                balance_quote = args.balance or 1000.0
+                            sizing = compute_position_size(balance_quote, signal)
+
+                            # التداول الفوري (Spot) لا يسمح بالبيع على المكشوف: تجاهل
+                            # إشارات البيع بأمان إن لم نملك كمية كافية من عملة الأساس،
+                            # بدل تكرار محاولة فاشلة كل دورة بخطأ "رصيد غير كافٍ".
+                            skip_sell = False
+                            if live and signal.side == "sell":
+                                base_balance = fetch_base_balance(exchange, symbol)
+                                if base_balance < sizing.quantity:
+                                    base = symbol.split("/")[0]
+                                    print(
+                                        f"[{ts}] {tag} إشارة بيع لكن لا يوجد رصيد كافٍ من {base} "
+                                        f"({base_balance:.8f} متاح، {sizing.quantity:.8f} مطلوب). تم تجاهلها."
+                                    )
+                                    skip_sell = True
+
+                            if not skip_sell:
+                                result = execute_signal(exchange, symbol, signal, sizing, live=live)
+                                print(f"[{ts}] {tag} إشارة {signal.side} جديدة! {result}")
+                                notify(
+                                    f"إشارة {signal.side} جديدة — {symbol}",
+                                    f"سعر الدخول {signal.price:.6f} | وقف {signal.stop_loss:.6f} | هدف {signal.take_profit:.6f}",
+                                )
+                                if sizing.quantity > 0:
+                                    save_open_position(
+                                        state_path,
+                                        OpenPosition(
+                                            symbol=symbol,
+                                            side=signal.side,
+                                            entry_price=signal.price,
+                                            stop_loss=signal.stop_loss,
+                                            take_profit=signal.take_profit,
+                                            quantity=sizing.quantity,
+                                            opened_at=ts,
+                                            live=live,
+                                        ),
+                                    )
+                                    open_count += 1
+                        else:
+                            print(f"[{ts}] {tag} لا توجد إشارة الآن. السعر={price:.6f}")
+                except Exception as exc:  # لا نوقف المراقبة المستمرة بسبب خطأ عابر (شبكة، إلخ)
+                    logger.error("[%s] %s خطأ في دورة المراقبة: %s", ts, tag, exc)
 
             if args.max_iterations and iterations >= args.max_iterations:
                 break
@@ -235,7 +260,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--symbol", required=True, help="مثال: BTC/USDT")
+    common.add_argument("--symbol", required=True, help="مثال: BTC/USDT (أو عدة رموز مفصولة بفاصلة لأمر watch: \"BTC/USDT,ETH/USDT\")")
     common.add_argument("--timeframe", default="4h", help="مثال: 15m, 1h, 4h, 1d")
     common.add_argument("--candles", type=int, default=400, help="عدد الشموع التاريخية المطلوبة")
 
