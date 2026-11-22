@@ -133,3 +133,21 @@ def test_parsers_and_resample(tmp_path):
                                             "2024-01-01 01:00:00,1,2,0.5,1.5\n2024-01-01 00:00:00,1,2,0.5,1.2\n")
     rows = CsvProvider(str(tmp_path)).candles("EURUSD", "H1")
     assert [x.close for x in rows] == [1.2, 1.5]
+
+
+def test_spread_is_a_real_cost():
+    c = synthetic()
+    s = TrendMomentumStrategy({"min_score": 60})
+    cheap = run_backtest(c, "EURUSD", s, spread_pips=0).stats()
+    wide = run_backtest(c, "EURUSD", s, spread_pips=20).stats()
+    assert wide["net_profit"] < cheap["net_profit"]
+
+
+def test_telegram_placeholder_disabled(monkeypatch):
+    from forexbot.notifier import Notifier
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "الرمز")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "الرقم")
+    assert Notifier().telegram is False
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-def_1")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "987654")
+    assert Notifier().telegram is True

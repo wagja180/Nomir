@@ -52,10 +52,15 @@ class BacktestResult:
 
 def run_backtest(candles: list[Candle], symbol: str, strategy: TrendMomentumStrategy | None = None,
                  balance: float = 10000.0, risk_pct: float = 1.0, spread_pips: float = 1.0) -> BacktestResult:
-    """يدخل عند افتتاح الشمعة التالية للإشارة؛ إن لمست الشمعة الوقف والهدف معاً نحتسب الوقف."""
+    """يدخل عند افتتاح الشمعة التالية للإشارة؛ إن لمست الشمعة الوقف والهدف معاً نحتسب الوقف.
+
+    الأسعار التاريخية أسعار وسطية: الشراء يُفتح بسعر الطلب (ask) ويُغلق بسعر العرض (bid)،
+    والعكس للبيع، فيُحتسب السبريد كتكلفة حقيقية في كل صفقة.
+    """
     strategy = strategy or TrendMomentumStrategy()
     d = strategy.prepare(candles)
     spread = spread_pips * symbols.pip_size(symbol)
+    half = spread / 2
     res = BacktestResult(symbol, start_balance=balance)
     open_t: Trade | None = None
     risk_amt = 0.0
@@ -68,7 +73,7 @@ def run_backtest(candles: list[Candle], symbol: str, strategy: TrendMomentumStra
             if sig:
                 j = i + 1
                 sgn = 1 if sig.side == "BUY" else -1
-                entry = c[j].open + sgn * spread / 2
+                entry = c[j].open + sgn * half
                 dist = abs(sig.entry - sig.stop_loss)
                 open_t = Trade(sig.side, c[j].time, entry, entry - sgn * dist,
                                entry + sgn * dist * strategy.p["rr"])
@@ -77,8 +82,10 @@ def run_backtest(candles: list[Candle], symbol: str, strategy: TrendMomentumStra
                 continue
         else:
             sgn = 1 if open_t.side == "BUY" else -1
-            hit_sl = c[i].low <= open_t.sl if sgn > 0 else c[i].high >= open_t.sl
-            hit_tp = c[i].high >= open_t.tp if sgn > 0 else c[i].low <= open_t.tp
+            # الشراء يُغلق بسعر العرض (الوسط - نصف السبريد)، والبيع بسعر الطلب (الوسط + نصفه)
+            lo, hi = c[i].low - sgn * half, c[i].high - sgn * half
+            hit_sl = lo <= open_t.sl if sgn > 0 else hi >= open_t.sl
+            hit_tp = hi >= open_t.tp if sgn > 0 else lo <= open_t.tp
             if hit_sl or hit_tp:
                 px = open_t.sl if hit_sl else open_t.tp
                 r = sgn * (px - open_t.entry) / abs(open_t.entry - open_t.sl)
