@@ -98,7 +98,7 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("run")
     sub.add_parser("status")
     o = sub.add_parser("optimize")
-    o.add_argument("--symbol", help="زوج واحد (الافتراضي: كل الأزواج في الإعدادات)")
+    o.add_argument("--symbol", help="زوج أو عدة أزواج مفصولة بفاصلة، مثل XAUUSD,EURUSD")
     o.add_argument("--timeframes", default="H1,H4")
     b = sub.add_parser("backtest")
     b.add_argument("--symbol", help="زوج واحد (الافتراضي: كل الأزواج في الإعدادات)")
@@ -129,7 +129,7 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if a.cmd == "optimize":
-        optimize(cfg, [a.symbol] if a.symbol else cfg["symbols"], a.timeframes.split(","))
+        optimize(cfg, a.symbol.split(",") if a.symbol else cfg["symbols"], a.timeframes.split(","))
         return
 
     if a.cmd == "status":
