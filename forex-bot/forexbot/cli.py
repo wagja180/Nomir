@@ -4,6 +4,7 @@
   python -m forexbot news       عرض الأخبار والأحداث الاقتصادية القادمة
   python -m forexbot run        تشغيل البوت بشكل مستمر
   python -m forexbot backtest   اختبار الاستراتيجية تاريخياً
+  python -m forexbot status     الرصيد والصفقات (وضع المحاكاة)
 """
 from __future__ import annotations
 
@@ -26,6 +27,30 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 
+def print_status(cfg: dict) -> None:
+    from .broker import PaperBroker
+    p = cfg.get("paper", {})
+    start = float(p.get("balance", 10000.0))
+    b = PaperBroker(p.get("state_file", "paper_state.json"), start)
+    closed = b.history
+    wins = sum(1 for t in closed if t.pnl > 0)
+    print("💼 الحساب التجريبي")
+    print(f"  الرصيد: {b.balance:,.2f} $   (البداية {start:,.2f} $)")
+    print(f"  الربح/الخسارة المحقق: {b.balance - start:+,.2f} $")
+    print(f"  الصفقات المغلقة: {len(closed)}" + (f"   الرابحة: {100 * wins / len(closed):.0f}%" if closed else ""))
+    print(f"\n📂 الصفقات المفتوحة ({len(b.positions)}):")
+    for t in b.positions:
+        print(f"  {t.id} {t.symbol} {'شراء' if t.side == 'BUY' else 'بيع'}  دخول {t.entry:.5g}  "
+              f"وقف {t.stop_loss:.5g}  هدف {t.take_profit:.5g}  ({t.opened_at[:16].replace('T', ' ')})")
+    if not b.positions:
+        print("  لا يوجد")
+    print("\n📜 آخر الصفقات المغلقة:")
+    for t in closed[-10:][::-1]:
+        print(f"  {t.id} {t.symbol} {'شراء' if t.side == 'BUY' else 'بيع'}  {t.pnl:+,.2f} $  ({t.reason})")
+    if not closed:
+        print("  لا يوجد بعد")
+
+
 def main(argv: list[str] | None = None) -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -37,6 +62,7 @@ def main(argv: list[str] | None = None) -> None:
     n = sub.add_parser("news")
     n.add_argument("--hours", type=float, default=24)
     sub.add_parser("run")
+    sub.add_parser("status")
     b = sub.add_parser("backtest")
     b.add_argument("--symbol", help="زوج واحد (الافتراضي: كل الأزواج في الإعدادات)")
     b.add_argument("--timeframe", default=None)
@@ -62,6 +88,10 @@ def main(argv: list[str] | None = None) -> None:
                   f"{fmt_time(candles[-1].time, '%Y-%m-%d')}) ===")
             for k, v in res.stats().items():
                 print(f"  {k}: {v}")
+        return
+
+    if a.cmd == "status":
+        print_status(cfg)
         return
 
     bot = ForexBot(cfg)
