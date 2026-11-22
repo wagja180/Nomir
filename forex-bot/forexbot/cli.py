@@ -5,6 +5,7 @@
   python -m forexbot run        تشغيل البوت بشكل مستمر
   python -m forexbot backtest   اختبار الاستراتيجية تاريخياً
   python -m forexbot status     الرصيد والصفقات (وضع المحاكاة)
+  python -m forexbot optimize   تجربة عدة إعدادات وعرض أفضلها
 """
 from __future__ import annotations
 
@@ -25,6 +26,39 @@ from .strategy import TrendMomentumStrategy
 def load_config(path: str) -> dict:
     with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def optimize(cfg: dict, syms: list[str], tfs: list[str]) -> None:
+    """يجرب عدة إعدادات (الإطار، قوة الإشارة، العائد/المخاطرة) ويرتب النتائج."""
+    provider = make_provider(cfg.get("data", {}))
+    risk = cfg.get("risk", {})
+    spread = cfg.get("paper", {}).get("spread_pips", 1.0)
+    rows = []
+    for sym in syms:
+        for tf in tfs:
+            try:
+                candles = provider.candles(sym, tf, 100000)
+            except Exception as e:
+                print(f"تعذّر جلب {sym} {tf}: {e}")
+                continue
+            base = TrendMomentumStrategy(cfg.get("strategy"))
+            prepared = base.prepare(candles)  # المؤشرات لا تتغير بين التجارب
+            print(f"... {sym} {tf}", flush=True)
+            for ms in (50, 60, 70, 80):
+                for rr in (1.5, 2.0, 3.0):
+                    strat = TrendMomentumStrategy({**(cfg.get("strategy") or {}), "min_score": ms, "rr": rr})
+                    st = run_backtest(candles, sym, strat, risk_pct=risk.get("risk_per_trade_pct", 1.0),
+                                      spread_pips=spread, max_trades_per_day=risk.get("max_trades_per_day", 0),
+                                      prepared=prepared).stats()
+                    if st.get("trades", 0) >= 20:
+                        rows.append((sym, tf, ms, rr, st))
+    rows.sort(key=lambda r: -r[4]["profit_factor"])
+    print("\nالزوج    الإطار القوة  R:R  صفقات/يوم  معامل الربح  العائد%  التراجع%")
+    for sym, tf, ms, rr, st in rows[:25]:
+        flag = "✅" if st["profit_factor"] >= 1.2 and st["max_drawdown_%"] > -20 else "  "
+        print(f"{flag}{sym:8} {tf:4} {ms:4} {rr:4.1f}   {st['trades_per_day']:6.2f}    {st['profit_factor']:6.2f}"
+              f"   {st['return_%']:7.1f}  {st['max_drawdown_%']:7.1f}")
+    print("\n✅ = معامل ربح ≥ 1.2 وتراجع أقل من 20%. احذر: أفضل نتيجة من عدة تجارب قد تكون صدفة.")
 
 
 def print_status(cfg: dict) -> None:
@@ -63,6 +97,9 @@ def main(argv: list[str] | None = None) -> None:
     n.add_argument("--hours", type=float, default=24)
     sub.add_parser("run")
     sub.add_parser("status")
+    o = sub.add_parser("optimize")
+    o.add_argument("--symbol", help="زوج واحد (الافتراضي: كل الأزواج في الإعدادات)")
+    o.add_argument("--timeframes", default="H1,H4")
     b = sub.add_parser("backtest")
     b.add_argument("--symbol", help="زوج واحد (الافتراضي: كل الأزواج في الإعدادات)")
     b.add_argument("--timeframe", default=None)
@@ -83,11 +120,16 @@ def main(argv: list[str] | None = None) -> None:
             if not candles:
                 print(f"\n=== {sym}: لا توجد بيانات ===")
                 continue
-            res = run_backtest(candles, sym, strat, risk_pct=risk, spread_pips=spread)
+            res = run_backtest(candles, sym, strat, risk_pct=risk, spread_pips=spread,
+                               max_trades_per_day=cfg.get("risk", {}).get("max_trades_per_day", 0))
             print(f"\n=== {sym} {tf}  ({fmt_time(candles[0].time, '%Y-%m-%d')} → "
                   f"{fmt_time(candles[-1].time, '%Y-%m-%d')}) ===")
             for k, v in res.stats().items():
                 print(f"  {k}: {v}")
+        return
+
+    if a.cmd == "optimize":
+        optimize(cfg, [a.symbol] if a.symbol else cfg["symbols"], a.timeframes.split(","))
         return
 
     if a.cmd == "status":

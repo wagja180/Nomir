@@ -28,6 +28,7 @@ risk:
   max_open_trades: 3
   max_daily_loss_pct: 3.0
   min_units: 1000
+  max_trades_per_day: 0      # 0 = بلا حد، 1 = صفقة واحدة فقط في اليوم
 
 news:
   refresh_minutes: 30

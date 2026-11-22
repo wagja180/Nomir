@@ -56,6 +56,7 @@ class ForexBot:
         else:
             raise ValueError(f"وضع غير معروف: {mode}")
         self._day, self._day_start_balance = None, None
+        self._trades_day, self._trades_today = None, 0
         self._last_signal_bar: dict[str, object] = {}
 
     # ---- مساعدات ----
@@ -78,6 +79,12 @@ class ForexBot:
         if self._day != today:
             self._day, self._day_start_balance = today, balance
         return balance - self._day_start_balance
+
+    def _count_today(self) -> int:
+        today = datetime.now(timezone.utc).date()
+        if self._trades_day != today:
+            self._trades_day, self._trades_today = today, 0
+        return self._trades_today
 
     # ---- التقارير ----
     def news_report(self, hours: float = 24) -> str:
@@ -139,13 +146,17 @@ class ForexBot:
             if self._last_signal_bar.get(sig.symbol) == sig.time:
                 continue  # لا تكرار لنفس الشمعة
             self._last_signal_bar[sig.symbol] = sig.time
+            limit = self.risk.cfg.max_trades_per_day
             if self.broker is None:
+                if limit and self._count_today() >= limit:
+                    continue
+                self._trades_today += 1
                 self.notifier.send(format_signal(sig))
                 continue
             balance = float(self.broker.balance)
             opens = self.broker.open_positions()
             ok, why = self.risk.can_open(len(opens), self._day_pnl(balance), balance,
-                                         any(p.symbol == sig.symbol for p in opens))
+                                         any(p.symbol == sig.symbol for p in opens), self._count_today())
             if not ok:
                 log.info("%s: لم تُفتح الصفقة — %s", sig.symbol, why)
                 continue
@@ -155,6 +166,7 @@ class ForexBot:
                 log.info("%s: الحجم أصغر من الحد الأدنى", sig.symbol)
                 continue
             self.broker.market_order(sig.symbol, sig.side, units, sig.stop_loss, sig.take_profit, sig.entry)
+            self._trades_today += 1
             self.notifier.send("📌 صفقة جديدة\n" + format_signal(sig, units))
 
     def run(self) -> None:

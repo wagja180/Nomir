@@ -27,6 +27,7 @@ class BacktestResult:
     trades: list[Trade] = field(default_factory=list)
     equity: list[float] = field(default_factory=list)
     start_balance: float = 10000.0
+    trading_days: float = 0.0
 
     def stats(self) -> dict:
         n = len(self.trades)
@@ -47,21 +48,26 @@ class BacktestResult:
             "return_%": round(100 * sum(pnl) / self.start_balance, 2),
             "max_drawdown_%": round(100 * dd, 2),
             "avg_R": round(sum(t.r_multiple for t in self.trades) / n, 2),
+            "trades_per_day": round(n / self.trading_days, 2) if self.trading_days else 0,
         }
 
 
 def run_backtest(candles: list[Candle], symbol: str, strategy: TrendMomentumStrategy | None = None,
-                 balance: float = 10000.0, risk_pct: float = 1.0, spread_pips: float = 1.0) -> BacktestResult:
+                 balance: float = 10000.0, risk_pct: float = 1.0, spread_pips: float = 1.0,
+                 max_trades_per_day: int = 0, prepared=None) -> BacktestResult:
     """يدخل عند افتتاح الشمعة التالية للإشارة؛ إن لمست الشمعة الوقف والهدف معاً نحتسب الوقف.
 
     الأسعار التاريخية أسعار وسطية: الشراء يُفتح بسعر الطلب (ask) ويُغلق بسعر العرض (bid)،
     والعكس للبيع، فيُحتسب السبريد كتكلفة حقيقية في كل صفقة.
     """
     strategy = strategy or TrendMomentumStrategy()
-    d = strategy.prepare(candles)
+    d = prepared or strategy.prepare(candles)
     spread = spread_pips * symbols.pip_size(symbol)
     half = spread / 2
     res = BacktestResult(symbol, start_balance=balance)
+    if candles:
+        res.trading_days = (candles[-1].time - candles[0].time) / 86400 * 5 / 7  # أيام التداول (بدون العطل)
+    per_day: dict[int, int] = {}
     open_t: Trade | None = None
     risk_amt = 0.0
     c = candles
@@ -70,7 +76,11 @@ def run_backtest(candles: list[Candle], symbol: str, strategy: TrendMomentumStra
     while i < len(c) - 1:
         if open_t is None:
             sig = strategy.signal_at(d, i, symbol)
+            day = c[i].time // 86400
+            if sig and max_trades_per_day and per_day.get(day, 0) >= max_trades_per_day:
+                sig = None
             if sig:
+                per_day[day] = per_day.get(day, 0) + 1
                 j = i + 1
                 sgn = 1 if sig.side == "BUY" else -1
                 entry = c[j].open + sgn * half

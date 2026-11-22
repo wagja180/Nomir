@@ -12,6 +12,7 @@ class RiskConfig:
     max_open_trades: int = 3
     max_daily_loss_pct: float = 3.0     # إيقاف التداول لليوم بعد هذه الخسارة
     max_spread_pips: float = 3.0
+    max_trades_per_day: int = 0         # 0 = بلا حد، 1 = صفقة واحدة فقط في اليوم
     min_units: int = 1000               # ميكرو لوت
 
 
@@ -41,7 +42,9 @@ class RiskManager:
         self.cfg = cfg
 
     def can_open(self, open_trades: int, day_pnl: float, balance: float,
-                 symbol_already_open: bool) -> tuple[bool, str]:
+                 symbol_already_open: bool, trades_today: int = 0) -> tuple[bool, str]:
+        if self.cfg.max_trades_per_day and trades_today >= self.cfg.max_trades_per_day:
+            return False, "تم بلوغ عدد الصفقات المسموح اليوم"
         if symbol_already_open:
             return False, "يوجد صفقة مفتوحة على نفس الزوج"
         if open_trades >= self.cfg.max_open_trades:

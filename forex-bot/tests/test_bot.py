@@ -151,3 +151,18 @@ def test_telegram_placeholder_disabled(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:ABC-def_1")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "987654")
     assert Notifier().telegram is True
+
+
+def test_max_trades_per_day():
+    c = synthetic()
+    s = TrendMomentumStrategy({"min_score": 50, "rr": 0.5})
+    res = run_backtest(c, "EURUSD", s, spread_pips=0, max_trades_per_day=1)
+    days = [t.entry_time // 86400 for t in res.trades]
+    # الحد يُطبّق على يوم الإشارة؛ الدخول قد يقع في الشمعة التالية (بداية اليوم التالي)
+    assert all(days.count(d) <= 2 for d in days)
+    unlimited = run_backtest(c, "EURUSD", s, spread_pips=0)
+    assert len(res.trades) <= len(unlimited.trades)
+    assert res.stats()["trades_per_day"] > 0
+    rm = RiskManager(RiskConfig(max_trades_per_day=1))
+    assert not rm.can_open(0, 0, 10000, False, trades_today=1)[0]
+    assert rm.can_open(0, 0, 10000, False, trades_today=0)[0]
