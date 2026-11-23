@@ -6,6 +6,7 @@
   python -m forexbot backtest   اختبار الاستراتيجية تاريخياً
   python -m forexbot status     الرصيد والصفقات (وضع المحاكاة)
   python -m forexbot optimize   تجربة عدة إعدادات وعرض أفضلها
+  python -m forexbot telegram   إرسال رسالة اختبار إلى تيليجرام
 """
 from __future__ import annotations
 
@@ -64,6 +65,34 @@ def optimize(cfg: dict, syms: list[str], tfs: list[str]) -> None:
     print("\n✅ = معامل ربح ≥ 1.2 وتراجع أقل من 20%. احذر: أفضل نتيجة من عدة تجارب قد تكون صدفة.")
 
 
+def test_telegram() -> None:
+    import urllib.error
+    from .notifier import Notifier
+    n = Notifier()
+    if not (n.token and n.chat):
+        print("❌ TELEGRAM_BOT_TOKEN أو TELEGRAM_CHAT_ID غير مضبوط. نفّذ: source $HOME/.bashrc")
+        return
+    if not n.telegram:
+        print("❌ الرمز أو الرقم بصيغة خاطئة (انظر الرسالة أعلاه).")
+        return
+    print(f"الرقم: {n.chat}   الرمز يبدأ بـ: {n.token.split(':')[0]}:…")
+    print("جارٍ الإرسال…", flush=True)
+    try:
+        n.send_telegram("✅ اختبار: البوت متصل بتيليجرام بنجاح")
+        print("✅ تم! تفقّد تيليجرام.")
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        if e.code == 401:
+            print("❌ الرمز غير صحيح (ربما أُلغي). خذ الرمز الجديد من BotFather.")
+        elif e.code in (400, 403):
+            print("❌ تيليجرام رفض الإرسال: افتح بوتك في تيليجرام واضغط Start، وتأكد من رقم chat id.")
+        else:
+            print(f"❌ خطأ من تيليجرام {e.code}: {body[:200]}")
+    except Exception as e:
+        print(f"❌ تعذّر الوصول إلى api.telegram.org: {e}")
+        print("   جرّب شبكة أخرى (واي فاي بدل 4G أو العكس). إن كان تيليجرام محجوباً في بلدك، شغّل VPN.")
+
+
 def print_status(cfg: dict) -> None:
     from .broker import PaperBroker
     p = cfg.get("paper", {})
@@ -100,6 +129,7 @@ def main(argv: list[str] | None = None) -> None:
     n.add_argument("--hours", type=float, default=24)
     sub.add_parser("run")
     sub.add_parser("status")
+    sub.add_parser("telegram")
     o = sub.add_parser("optimize")
     o.add_argument("--symbol", help="زوج أو عدة أزواج مفصولة بفاصلة، مثل XAUUSD,EURUSD")
     o.add_argument("--timeframes", default="H1,H4")
@@ -133,6 +163,10 @@ def main(argv: list[str] | None = None) -> None:
 
     if a.cmd == "optimize":
         optimize(cfg, a.symbol.split(",") if a.symbol else cfg["symbols"], a.timeframes.split(","))
+        return
+
+    if a.cmd == "telegram":
+        test_telegram()
         return
 
     if a.cmd == "status":

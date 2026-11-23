@@ -43,5 +43,16 @@ def post_json(url: str, body: dict, headers: dict | None = None, timeout: int = 
     return json.loads(request(url, headers=h, data=json.dumps(body).encode(), method="POST", timeout=timeout))
 
 
-def post_form(url: str, fields: dict, timeout: int = 15) -> str:
-    return request(url, data=urllib.parse.urlencode(fields).encode(), method="POST", timeout=timeout)
+def post_form(url: str, fields: dict, timeout: int = 30, retries: int = 3) -> str:
+    """POST مع إعادة المحاولة عند انقطاع الشبكة أو انتهاء المهلة."""
+    body = urllib.parse.urlencode(fields).encode()
+    for k in range(retries):
+        try:
+            return request(url, data=body, method="POST", timeout=timeout)
+        except urllib.error.HTTPError:
+            raise  # خطأ من الخادم (مثل رمز خاطئ) — لا فائدة من التكرار
+        except (OSError, http.client.HTTPException):
+            if k == retries - 1:
+                raise
+            time.sleep(3 * (k + 1))
+    raise RuntimeError("unreachable")

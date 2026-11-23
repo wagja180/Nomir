@@ -20,11 +20,15 @@ class Notifier:
                         "— تم تعطيل تيليجرام. للإلغاء: unset TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID")
             self.telegram = False
 
+    def send_telegram(self, text: str) -> None:
+        """يرسل إلى تيليجرام ويرفع الخطأ إن فشل."""
+        net.post_form(f"https://api.telegram.org/bot{self.token}/sendMessage",
+                      {"chat_id": self.chat, "text": text})
+
     def send(self, text: str) -> None:
         print(text, flush=True)
         if self.telegram:
             try:
-                net.post_form(f"https://api.telegram.org/bot{self.token}/sendMessage",
-                              {"chat_id": self.chat, "text": text})
+                self.send_telegram(text)
             except Exception as e:
                 log.warning("فشل إرسال تيليجرام: %s", e)
