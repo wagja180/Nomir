@@ -53,11 +53,14 @@ def optimize(cfg: dict, syms: list[str], tfs: list[str]) -> None:
                     if st.get("trades", 0) >= 20:
                         rows.append((sym, tf, ms, rr, st))
     rows.sort(key=lambda r: -r[4]["profit_factor"])
-    print("\nالزوج    الإطار القوة  R:R  صفقات/يوم  معامل الربح  العائد%  التراجع%")
-    for sym, tf, ms, rr, st in rows[:25]:
+    # جدول ضيق يناسب شاشة الهاتف
+    print("\n   pair   tf  sc  rr | /day   PF   ret%   dd%")
+    for sym, tf, ms, rr, st in rows[:15]:
         flag = "✅" if st["profit_factor"] >= 1.2 and st["max_drawdown_%"] > -20 else "  "
-        print(f"{flag}{sym:8} {tf:4} {ms:4} {rr:4.1f}   {st['trades_per_day']:6.2f}    {st['profit_factor']:6.2f}"
-              f"   {st['return_%']:7.1f}  {st['max_drawdown_%']:7.1f}")
+        print(f"{flag}{sym:6} {tf:2} {ms:2} {rr:3.1f} | {st['trades_per_day']:4.2f} {st['profit_factor']:4.2f}"
+              f" {st['return_%']:+6.1f} {st['max_drawdown_%']:5.1f}")
+    print("\nsc = أقل قوة إشارة، rr = العائد/المخاطرة، /day = صفقات في اليوم، PF = معامل الربح، "
+          "ret = العائد، dd = أقصى تراجع")
     print("\n✅ = معامل ربح ≥ 1.2 وتراجع أقل من 20%. احذر: أفضل نتيجة من عدة تجارب قد تكون صدفة.")
 
 
