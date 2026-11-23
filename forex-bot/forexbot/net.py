@@ -1,7 +1,10 @@
 """طلبات HTTP بمكتبة Python القياسية فقط (بدون requests)."""
 from __future__ import annotations
 
+import http.client
 import json
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -14,8 +17,17 @@ def request(url: str, params: dict | None = None, headers: dict | None = None,
         url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
     h = {"User-Agent": UA, **(headers or {})}
     req = urllib.request.Request(url, data=data, headers=h, method=method)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read().decode("utf-8", errors="replace")
+    # إعادة المحاولة عند انقطاع الاتصال (شائع على شبكات الجوال 4G)
+    attempts = 1 if data is not None else 3
+    for k in range(attempts):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read().decode("utf-8", errors="replace")
+        except (http.client.IncompleteRead, ConnectionError, TimeoutError, urllib.error.URLError) as e:
+            if isinstance(e, urllib.error.HTTPError) or k == attempts - 1:
+                raise
+            time.sleep(2 * (k + 1))
+    raise RuntimeError("unreachable")
 
 
 def get_text(url: str, **kw) -> str:
