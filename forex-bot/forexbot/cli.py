@@ -7,6 +7,7 @@
   python -m forexbot status     الرصيد والصفقات (وضع المحاكاة)
   python -m forexbot optimize   تجربة عدة إعدادات وعرض أفضلها
   python -m forexbot telegram   إرسال رسالة اختبار إلى تيليجرام
+  python -m forexbot market     حالة السوق الآن (السعر، الاتجاه، المؤشرات) لكل زوج
 """
 from __future__ import annotations
 
@@ -63,6 +64,52 @@ def optimize(cfg: dict, syms: list[str], tfs: list[str]) -> None:
     print("\nsc = أقل قوة إشارة، rr = العائد/المخاطرة، /day = صفقات في اليوم، PF = معامل الربح، "
           "ret = العائد، dd = أقصى تراجع")
     print("\n✅ = معامل ربح ≥ 1.2 وتراجع أقل من 20%. احذر: أفضل نتيجة من عدة تجارب قد تكون صدفة.")
+
+
+def market_report(cfg: dict, syms: list[str], tf: str) -> None:
+    """حالة كل زوج الآن حتى لو لم توجد إشارة."""
+    from . import symbols as sy
+    from .candles import fmt_time
+    provider = make_provider(cfg.get("data", {}))
+    strat = TrendMomentumStrategy(cfg.get("strategy"))
+    p = strat.p
+    print(f"📊 حالة السوق — الإطار {tf}")
+    for sym in syms:
+        try:
+            c = provider.candles(sym, tf, 600)
+        except Exception as e:
+            print(f"\n{sym}: تعذّر جلب الأسعار ({e})")
+            continue
+        if len(c) < p["ema_slow"] + 2:
+            print(f"\n{sym}: بيانات غير كافية")
+            continue
+        d = strat.prepare(c)
+        i = len(d) - 1
+        px, digits = d.close[i], (2 if sy.split(sym)[0] in ("XAU", "XAG") else 3 if "JPY" in sym else 5)
+        ref = d.close[max(0, i - 6)]
+        chg = 100 * (px - ref) / ref
+        up = px > d.ema_s[i] and d.ema_f[i] > d.ema_s[i]
+        down = px < d.ema_s[i] and d.ema_f[i] < d.ema_s[i]
+        trend = "صاعد ▲" if up else "هابط ▼" if down else "عرضي ↔"
+        htf = d.htf[i]
+        htf_ok = (up and htf > 0) or (down and htf < 0)
+        print(f"\n{sy.normalize(sym)}  {px:.{digits}f}   ({chg:+.2f}% آخر 6 شموع)   {fmt_time(c[-1].time)} UTC")
+        print(f"  الاتجاه: {trend}   RSI {d.rsi[i]:.0f}   ADX {d.adx[i]:.0f}"
+              f"   H4 {'يؤكد ✅' if htf_ok else 'لا يؤكد'}")
+        sig = strat.signal_at(d, i, sym)
+        if sig:
+            print(f"  🎯 إشارة {'شراء' if sig.side == 'BUY' else 'بيع'} الآن! القوة {sig.score:.0f} — "
+                  f"وقف {sig.stop_loss:.{digits}f} هدف {sig.take_profit:.{digits}f}")
+            continue
+        need = []
+        if not (up or down):
+            need.append("اتجاه واضح (السعر و EMA50 معاً فوق أو تحت EMA200)")
+        else:
+            if d.adx[i] < p["adx_min"]:
+                need.append(f"قوة اتجاه أعلى (ADX ≥ {p['adx_min']})")
+            need.append("زناد دخول: تقاطع MACD أو ارتداد RSI " +
+                        ("فوق " + str(p["rsi_pullback"]) if up else "تحت " + str(100 - p["rsi_pullback"])))
+        print("  ⏳ لا إشارة الآن. ينقص: " + "، ".join(need))
 
 
 def test_telegram() -> None:
@@ -130,6 +177,9 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("run")
     sub.add_parser("status")
     sub.add_parser("telegram")
+    mk = sub.add_parser("market")
+    mk.add_argument("--symbol", help="زوج أو عدة أزواج مفصولة بفاصلة، مثل XAUUSD,EURUSD")
+    mk.add_argument("--timeframe", default=None)
     o = sub.add_parser("optimize")
     o.add_argument("--symbol", help="زوج أو عدة أزواج مفصولة بفاصلة، مثل XAUUSD,EURUSD")
     o.add_argument("--timeframes", default="H1,H4")
@@ -163,6 +213,11 @@ def main(argv: list[str] | None = None) -> None:
 
     if a.cmd == "optimize":
         optimize(cfg, a.symbol.split(",") if a.symbol else cfg["symbols"], a.timeframes.split(","))
+        return
+
+    if a.cmd == "market":
+        market_report(cfg, a.symbol.split(",") if a.symbol else cfg["symbols"],
+                      a.timeframe or cfg.get("timeframe", "H1"))
         return
 
     if a.cmd == "telegram":
